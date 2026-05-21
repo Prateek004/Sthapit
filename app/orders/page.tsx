@@ -3,18 +3,248 @@ import React, { useState, useEffect, useRef } from "react";
 import { useApp } from "@/lib/store/AppContext";
 import AppShell from "@/components/ui/AppShell";
 import Modal from "@/components/ui/Modal";
-import { fmtRupee, fmtTime, fmtDate, todayStr, PAY_LABEL, SERVICE_LABEL, calcDiscount, calcGST, toP, QUICK_CASH } from "@/lib/utils";
+import {
+  fmtRupee, fmtTime, fmtDate, todayStr,
+  PAY_LABEL, SERVICE_LABEL, calcDiscount, calcGST, toP, QUICK_CASH,
+} from "@/lib/utils";
 import type { Order, OpenTable, CartItem, PaymentMethod } from "@/lib/types";
 import {
   TrendingUp, Banknote, ShoppingBag, Cloud, CloudOff,
   RefreshCw, ChevronDown, ChevronUp, Plus, CheckCircle, Clock,
   Printer, MessageCircle, CheckCircle2, X, Loader2, QrCode,
-  Smartphone, ClipboardList,
+  Smartphone, ClipboardList, LayoutGrid, List,
 } from "lucide-react";
 import { isSupabaseEnabled } from "@/lib/supabase/client";
 
 type PostTab = "invoice" | "whatsapp" | "kot";
 
+// ─── Table status helpers ─────────────────────────────────────────────────────
+function getTableDurMin(openedAt: string): number {
+  return Math.round((Date.now() - new Date(openedAt).getTime()) / 60000);
+}
+
+function getTableStatus(tab: OpenTable): "occ" | "warn" | "billreq" {
+  const dur = getTableDurMin(tab.openedAt);
+  // "bill req" flag stored on the tab — fall back to duration heuristic
+  if (dur >= 45) return "warn";
+  return "occ";
+}
+
+// ─── Compact Table Map inside Orders ─────────────────────────────────────────
+function TableMapPanel({
+  openTables,
+  tableCount,
+  onSelectTable,
+}: {
+  openTables: OpenTable[];
+  tableCount: number;
+  onSelectTable: (tab: OpenTable) => void;
+}) {
+  const totalTables = Math.max(tableCount, openTables.length, 1);
+  const occupiedMap = new Map(openTables.map((t) => [t.tableNumber, t]));
+
+  const occupied = openTables.length;
+  const openTotal = openTables.reduce((s, t) => {
+    return (
+      s +
+      t.items.reduce((ss, i) => {
+        const ao = i.selectedAddOns.reduce((x, a) => x + a.pricePaise, 0);
+        return ss + (i.unitPricePaise + ao) * i.qty;
+      }, 0)
+    );
+  }, 0);
+  const over45 = openTables.filter((t) => getTableDurMin(t.openedAt) >= 45).length;
+
+  return (
+    <div
+      className="rounded-2xl overflow-hidden border"
+      style={{
+        background: "#FEF9F4",
+        borderColor: "rgba(26,18,8,0.08)",
+      }}
+    >
+      {/* Header */}
+      <div
+        className="flex items-center gap-2.5 px-4 border-b"
+        style={{
+          height: 48,
+          background: "#fff",
+          borderColor: "rgba(26,18,8,0.06)",
+        }}
+      >
+        <span className="text-sm font-black text-gray-900 tracking-tight">
+          Table Map
+        </span>
+        <span className="text-xs text-gray-400 font-semibold">
+          · Ground floor
+        </span>
+        {/* Legend */}
+        <div className="flex gap-3 ml-auto items-center">
+          <LegendDot color="#fff" border="1px solid rgba(26,18,8,0.15)" label="Empty" />
+          <LegendDot color="#FEF0E8" border="1px solid #E8590C" label="Occupied" />
+          <LegendDot color="#FFF8EC" border="1.5px solid #B07D00" label=">45m" />
+        </div>
+      </div>
+
+      {/* Grid */}
+      <div className="p-4">
+        <p
+          className="text-[10px] font-bold tracking-widest mb-3"
+          style={{ color: "#7A6456" }}
+        >
+          TABLES · {totalTables} TOTAL
+        </p>
+        <div
+          className="grid gap-2"
+          style={{ gridTemplateColumns: "repeat(auto-fill, minmax(72px, 1fr))" }}
+        >
+          {Array.from({ length: totalTables }, (_, idx) => {
+            const n = idx + 1;
+            const tab = occupiedMap.get(n);
+            if (!tab) {
+              // Empty
+              return (
+                <div
+                  key={n}
+                  className="flex flex-col items-center justify-center rounded-xl py-3"
+                  style={{
+                    background: "#fff",
+                    border: "1px solid rgba(26,18,8,0.10)",
+                    minHeight: 64,
+                  }}
+                >
+                  <span
+                    className="text-base font-black"
+                    style={{ color: "#F0E8DF" }}
+                  >
+                    {n}
+                  </span>
+                </div>
+              );
+            }
+
+            const dur = getTableDurMin(tab.openedAt);
+            const isWarn = dur >= 45;
+            const tabTotal = tab.items.reduce((s, i) => {
+              const ao = i.selectedAddOns.reduce((x, a) => x + a.pricePaise, 0);
+              return s + (i.unitPricePaise + ao) * i.qty;
+            }, 0);
+
+            return (
+              <button
+                key={n}
+                onClick={() => onSelectTable(tab)}
+                className="flex flex-col items-center justify-center rounded-xl py-3 press"
+                style={{
+                  minHeight: 64,
+                  background: isWarn ? "#FFF8EC" : "#FEF0E8",
+                  border: isWarn
+                    ? "1.5px solid #B07D00"
+                    : "1px solid #E8590C",
+                }}
+              >
+                <span
+                  className="text-base font-black"
+                  style={{ color: isWarn ? "#7A4D00" : "#E8590C" }}
+                >
+                  {n}
+                </span>
+                <span
+                  className="text-[10px] font-bold leading-tight"
+                  style={{ color: isWarn ? "#7A4D00" : "#7C2600" }}
+                >
+                  {fmtRupee(tabTotal)}
+                </span>
+                <span
+                  className="text-[9px] font-bold"
+                  style={{ color: isWarn ? "#B07D00" : "#B83E06" }}
+                >
+                  {dur}m{isWarn ? " !" : ""}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Footer stats */}
+      <div
+        className="flex items-center gap-5 px-4"
+        style={{ height: 50, background: "#1A1208" }}
+      >
+        <StatChip value={String(occupied)} label="OCCUPIED" />
+        <div style={{ width: 1, height: 22, background: "rgba(255,255,255,0.08)" }} />
+        <StatChip value={fmtRupee(openTotal)} label="OPEN TOTAL" />
+        <div style={{ width: 1, height: 22, background: "rgba(255,255,255,0.08)" }} />
+        <StatChip
+          value={String(over45)}
+          label="OVER 45M"
+          valueStyle={{ color: over45 > 0 ? "#E8590C" : "#fff" }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function LegendDot({
+  color,
+  border,
+  label,
+}: {
+  color: string;
+  border: string;
+  label: string;
+}) {
+  return (
+    <div className="flex items-center gap-1">
+      <div
+        style={{
+          width: 8,
+          height: 8,
+          borderRadius: 2,
+          background: color,
+          border,
+          flexShrink: 0,
+        }}
+      />
+      <span
+        className="text-[10px] font-semibold"
+        style={{ color: "#7A6456", letterSpacing: "0.02em" }}
+      >
+        {label}
+      </span>
+    </div>
+  );
+}
+
+function StatChip({
+  value,
+  label,
+  valueStyle,
+}: {
+  value: string;
+  label: string;
+  valueStyle?: React.CSSProperties;
+}) {
+  return (
+    <div className="flex flex-col">
+      <span
+        className="text-sm font-black leading-tight"
+        style={{ color: "#fff", letterSpacing: "-0.02em", ...valueStyle }}
+      >
+        {value}
+      </span>
+      <span
+        className="text-[9px] font-bold"
+        style={{ color: "#7A6456", letterSpacing: "0.04em" }}
+      >
+        {label}
+      </span>
+    </div>
+  );
+}
+
+// ─── BillScreen ───────────────────────────────────────────────────────────────
 function BillScreen({
   order,
   onDone,
@@ -32,7 +262,9 @@ function BillScreen({
   const postTabs: { id: PostTab; label: string; Icon: React.ElementType }[] = [
     { id: "invoice",  label: "Invoice",  Icon: Printer       },
     { id: "whatsapp", label: "WhatsApp", Icon: MessageCircle },
-    ...(kotEnabled ? [{ id: "kot" as PostTab, label: "KOT", Icon: ClipboardList }] : []),
+    ...(kotEnabled
+      ? [{ id: "kot" as PostTab, label: "KOT", Icon: ClipboardList }]
+      : []),
   ];
 
   const handlePrint = () => {
@@ -56,7 +288,12 @@ function BillScreen({
       <div class="c">${tableInfo} · #${order.billNumber}</div>
       <div class="c">${new Date(order.createdAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</div>
       <hr/>
-      ${order.items.map((i) => `<div class="item">${i.qty}x ${i.name}${i.selectedPortion ? ` (${i.selectedPortion})` : ""}${i.selectedAddOns.length ? ` + ${i.selectedAddOns.map((a) => a.name).join(", ")}` : ""}${i.notes ? `<br/><em style="font-size:11px">-> ${i.notes}</em>` : ""}</div>`).join("")}
+      ${order.items
+        .map(
+          (i) =>
+            `<div class="item">${i.qty}x ${i.name}${i.selectedPortion ? ` (${i.selectedPortion})` : ""}${i.selectedAddOns.length ? ` + ${i.selectedAddOns.map((a) => a.name).join(", ")}` : ""}${i.notes ? `<br/><em style="font-size:11px">-> ${i.notes}</em>` : ""}</div>`
+        )
+        .join("")}
       <hr/></body></html>`;
     const w = window.open("", "_blank", "width=300,height=400");
     if (!w) return;
@@ -68,7 +305,7 @@ function BillScreen({
 
   const handleWhatsApp = () => {
     const lines = [
-      `*Bill from ${session?.businessName ?? "Vynn"}*`,
+      `*Bill from ${session?.businessName ?? "Sth1r"}*`,
       `Bill #: ${order.billNumber}`,
       `Date: ${fmtDate(order.createdAt)}`,
       ``,
@@ -139,7 +376,7 @@ function BillScreen({
               style={{ maxWidth: 320 }}
             >
               <div className="text-center font-bold text-sm mb-1">
-                {session?.businessName ?? "Vynn"}
+                {session?.businessName ?? "Sth1r"}
               </div>
               <div className="border-t border-dashed border-gray-300 my-2" />
               <div className="flex justify-between">
@@ -147,7 +384,9 @@ function BillScreen({
                 <span>{fmtDate(order.createdAt)}</span>
               </div>
               {order.tableNumber && (
-                <div className="text-center text-xs mt-1">Table: {order.tableNumber}</div>
+                <div className="text-center text-xs mt-1">
+                  Table: {order.tableNumber}
+                </div>
               )}
               <div className="border-t border-dashed border-gray-300 my-2" />
               {order.items.map((item, i) => {
@@ -234,7 +473,9 @@ function BillScreen({
             </div>
             <h3 className="font-black text-gray-900 text-lg mb-1">Kitchen Order Ticket</h3>
             <p className="text-sm text-gray-400 mb-2">
-              {order.tableNumber ? `Table ${order.tableNumber}` : order.serviceMode.replace("_", " ")}{" "}
+              {order.tableNumber
+                ? `Table ${order.tableNumber}`
+                : order.serviceMode.replace("_", " ")}{" "}
               · {order.items.length} item{order.items.length > 1 ? "s" : ""}
             </p>
             <div className="w-full bg-gray-50 rounded-2xl p-4 text-left mb-6 space-y-2">
@@ -281,12 +522,14 @@ function BillScreen({
   );
 }
 
+// ─── Payment methods ──────────────────────────────────────────────────────────
 const PAY_METHODS: { id: PaymentMethod; label: string; Icon: React.ElementType }[] = [
   { id: "cash",  label: "Cash",  Icon: Banknote   },
   { id: "upi",   label: "UPI",   Icon: Smartphone },
   { id: "split", label: "Split", Icon: Banknote   },
 ];
 
+// ─── CloseTableCheckout ───────────────────────────────────────────────────────
 function CloseTableCheckout({
   tab,
   onClose,
@@ -313,43 +556,43 @@ function CloseTableCheckout({
 
   const hasUpi = Boolean(session?.upiId);
 
-  const subtotalPaise  = tab.items.reduce((s, i) => {
+  const subtotalPaise = tab.items.reduce((s, i) => {
     const ao = i.selectedAddOns.reduce((x, a) => x + a.pricePaise, 0);
     return s + (i.unitPricePaise + ao) * i.qty;
   }, 0);
-  const discountValue  = Number(discountInput) || 0;
-  const discountPaise  = calcDiscount(subtotalPaise, discountType, discountValue);
-  const afterDiscount  = Math.max(0, subtotalPaise - discountPaise);
-  const gstPercent     = session?.gstPercent ?? 0;
-  const gstPaise       = calcGST(afterDiscount, gstPercent);
-  const totalPaise     = afterDiscount + gstPaise;
+  const discountValue = Number(discountInput) || 0;
+  const discountPaise = calcDiscount(subtotalPaise, discountType, discountValue);
+  const afterDiscount = Math.max(0, subtotalPaise - discountPaise);
+  const gstPercent    = session?.gstPercent ?? 0;
+  const gstPaise      = calcGST(afterDiscount, gstPercent);
+  const totalPaise    = afterDiscount + gstPaise;
 
-  const cashPaise    = toP(Number(cashInput) || 0);
-  const changePaise  = Math.max(0, cashPaise - totalPaise);
-  const splitCashP   = toP(Number(splitCash) || 0);
-  const splitUpiP    = toP(Number(splitUpi) || 0);
-  const splitTotal   = splitCashP + splitUpiP;
-  const splitOk      = splitTotal >= totalPaise;
+  const cashPaise   = toP(Number(cashInput) || 0);
+  const changePaise = Math.max(0, cashPaise - totalPaise);
+  const splitCashP  = toP(Number(splitCash) || 0);
+  const splitUpiP   = toP(Number(splitUpi)  || 0);
+  const splitTotal  = splitCashP + splitUpiP;
+  const splitOk     = splitTotal >= totalPaise;
 
   const canConfirm =
     !placing &&
-    ((method === "upi" && upiConfirmed) ||
-      (method === "cash" && cashInput !== "" && cashPaise >= totalPaise) ||
-      (method === "split" && splitOk));
+    ((method === "upi"   && upiConfirmed) ||
+     (method === "cash"  && cashInput !== "" && cashPaise >= totalPaise) ||
+     (method === "split" && splitOk));
 
   useEffect(() => {
     if (!showUpiQr || !hasUpi) return;
-    const amount = (totalPaise / 100).toFixed(2);
-    const upiId = session?.upiId ?? "";
-    const name  = encodeURIComponent(session?.businessName ?? "Vynn");
-    const upiStr = `upi://pay?pa=${upiId}&pn=${name}&am=${amount}&cu=INR`;
-    const api = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(upiStr)}`;
+    const amount  = (totalPaise / 100).toFixed(2);
+    const upiId   = session?.upiId ?? "";
+    const name    = encodeURIComponent(session?.businessName ?? "Sth1r");
+    const upiStr  = `upi://pay?pa=${upiId}&pn=${name}&am=${amount}&cu=INR`;
+    const api     = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(upiStr)}`;
     setQrSrc(""); setQrLoading(true);
     let cancelled = false;
-    const img = new Image();
-    img.onload = () => { if (!cancelled) { setQrSrc(api); setQrLoading(false); } };
+    const img     = new Image();
+    img.onload  = () => { if (!cancelled) { setQrSrc(api); setQrLoading(false); } };
     img.onerror = () => { if (!cancelled) setQrLoading(false); };
-    img.src = api;
+    img.src     = api;
     return () => { cancelled = true; img.onload = null; img.onerror = null; };
   }, [showUpiQr, hasUpi, totalPaise, session]);
 
@@ -361,8 +604,12 @@ function CloseTableCheckout({
         paymentMethod: method,
         discountType,
         discountValue,
-        cashReceivedPaise: method === "cash" ? cashPaise : undefined,
-        splitPayment: method === "split" ? { cashPaise: splitCashP, upiPaise: splitUpiP } : undefined,
+        cashReceivedPaise:
+          method === "cash" ? cashPaise : undefined,
+        splitPayment:
+          method === "split"
+            ? { cashPaise: splitCashP, upiPaise: splitUpiP }
+            : undefined,
       });
       onBilled(order);
     } catch {
@@ -375,35 +622,58 @@ function CloseTableCheckout({
     <div className="px-5 pb-6 space-y-4 pt-1">
       <div className="bg-gray-50 rounded-2xl p-4 max-h-36 overflow-y-auto">
         <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">
-          Table {tab.tableNumber} - {tab.items.reduce((s, i) => s + i.qty, 0)} items
+          Table {tab.tableNumber} — {tab.items.reduce((s, i) => s + i.qty, 0)} items
         </p>
         {tab.items.map((item, i) => {
           const ao = item.selectedAddOns.reduce((s, a) => s + a.pricePaise, 0);
           return (
             <div key={i} className="flex justify-between text-xs text-gray-600 mb-1">
-              <span>{item.qty}x {item.name}{item.selectedPortion ? ` (${item.selectedPortion})` : ""}</span>
-              <span className="font-semibold ml-2 shrink-0">{fmtRupee((item.unitPricePaise + ao) * item.qty)}</span>
+              <span>
+                {item.qty}x {item.name}
+                {item.selectedPortion ? ` (${item.selectedPortion})` : ""}
+              </span>
+              <span className="font-semibold ml-2 shrink-0">
+                {fmtRupee((item.unitPricePaise + ao) * item.qty)}
+              </span>
             </div>
           );
         })}
       </div>
 
       <div>
-        <p className="text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-wider">Discount (optional)</p>
+        <p className="text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-wider">
+          Discount (optional)
+        </p>
         <div className="flex gap-2">
           <div className="flex rounded-xl border border-gray-200 overflow-hidden shrink-0">
-            <button onClick={() => setDiscountType("flat")}
-              className={`px-3 py-2 text-xs font-bold transition-colors ${discountType === "flat" ? "bg-primary-500 text-white" : "bg-white text-gray-500"}`}>
+            <button
+              onClick={() => setDiscountType("flat")}
+              className={`px-3 py-2 text-xs font-bold transition-colors ${
+                discountType === "flat"
+                  ? "bg-primary-500 text-white"
+                  : "bg-white text-gray-500"
+              }`}
+            >
               &#8377;
             </button>
-            <button onClick={() => setDiscountType("percent")}
-              className={`px-3 py-2 text-xs font-bold transition-colors ${discountType === "percent" ? "bg-primary-500 text-white" : "bg-white text-gray-500"}`}>
+            <button
+              onClick={() => setDiscountType("percent")}
+              className={`px-3 py-2 text-xs font-bold transition-colors ${
+                discountType === "percent"
+                  ? "bg-primary-500 text-white"
+                  : "bg-white text-gray-500"
+              }`}
+            >
               %
             </button>
           </div>
-          <input type="number" className="flex-1 h-10 px-3 rounded-xl border border-gray-200 text-sm font-semibold outline-none focus:border-primary-500"
+          <input
+            type="number"
+            className="flex-1 h-10 px-3 rounded-xl border border-gray-200 text-sm font-semibold outline-none focus:border-primary-500"
             placeholder={discountType === "flat" ? "Flat discount" : "Discount %"}
-            value={discountInput} onChange={(e) => setDiscountInput(e.target.value)} />
+            value={discountInput}
+            onChange={(e) => setDiscountInput(e.target.value)}
+          />
         </div>
       </div>
 
@@ -440,10 +710,19 @@ function CloseTableCheckout({
         <p className="text-sm font-bold text-gray-700 mb-2">Payment Method</p>
         <div className="grid grid-cols-3 gap-2">
           {PAY_METHODS.map(({ id, label, Icon }) => (
-            <button key={id} onClick={() => { setMethod(id); setShowUpiQr(false); setUpiConfirmed(false); }}
+            <button
+              key={id}
+              onClick={() => {
+                setMethod(id);
+                setShowUpiQr(false);
+                setUpiConfirmed(false);
+              }}
               className={`py-3 rounded-2xl border-2 flex flex-col items-center gap-1.5 transition-all press ${
-                method === id ? "border-primary-500 bg-primary-50 text-primary-600" : "border-gray-200 text-gray-600"
-              }`}>
+                method === id
+                  ? "border-primary-500 bg-primary-50 text-primary-600"
+                  : "border-gray-200 text-gray-600"
+              }`}
+            >
               <Icon size={20} />
               <span className="text-xs font-bold">{label}</span>
             </button>
@@ -453,34 +732,47 @@ function CloseTableCheckout({
 
       {method === "cash" && (
         <div className="space-y-3">
-          <input type="number" autoFocus
+          <input
+            type="number"
+            autoFocus
             className={`w-full h-14 px-4 rounded-2xl border-2 outline-none text-2xl font-black transition-colors ${
               cashInput !== "" && cashPaise < totalPaise
                 ? "border-red-400 bg-red-50 text-red-600"
                 : "border-gray-200 focus:border-primary-500"
             }`}
             placeholder="Cash received"
-            value={cashInput} onChange={(e) => setCashInput(e.target.value)} />
+            value={cashInput}
+            onChange={(e) => setCashInput(e.target.value)}
+          />
           <div className="flex gap-2 flex-wrap">
             {QUICK_CASH.map((amt) => (
-              <button key={amt} onClick={() => setCashInput(String(amt))}
+              <button
+                key={amt}
+                onClick={() => setCashInput(String(amt))}
                 className={`px-3 py-1.5 rounded-xl border font-bold text-sm press ${
                   Number(cashInput) === amt
                     ? "border-primary-500 bg-primary-50 text-primary-600"
                     : "border-gray-200 text-gray-600 bg-white"
-                }`}>
+                }`}
+              >
                 &#8377;{amt}
               </button>
             ))}
-            <button onClick={() => setCashInput(String(totalPaise / 100))}
-              className="px-3 py-1.5 rounded-xl border border-gray-200 font-bold text-sm text-gray-600 bg-white press">
+            <button
+              onClick={() => setCashInput(String(totalPaise / 100))}
+              className="px-3 py-1.5 rounded-xl border border-gray-200 font-bold text-sm text-gray-600 bg-white press"
+            >
               Exact
             </button>
           </div>
           {cashInput !== "" && (
-            <div className={`rounded-xl py-3 text-center font-bold text-sm ${
-              cashPaise >= totalPaise ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600"
-            }`}>
+            <div
+              className={`rounded-xl py-3 text-center font-bold text-sm ${
+                cashPaise >= totalPaise
+                  ? "bg-green-50 text-green-700"
+                  : "bg-red-50 text-red-600"
+              }`}
+            >
               {cashPaise >= totalPaise
                 ? `Change: ${fmtRupee(changePaise)}`
                 : `Short by ${fmtRupee(totalPaise - cashPaise)}`}
@@ -496,29 +788,44 @@ function CloseTableCheckout({
             <p className="font-bold text-blue-800">Collect via UPI</p>
             <p className="text-sm text-blue-600 mt-1">{fmtRupee(totalPaise)}</p>
           </div>
-          {hasUpi && (
-            !showUpiQr ? (
-              <button onClick={() => setShowUpiQr(true)}
-                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 border-blue-200 text-blue-600 font-bold text-sm press">
+          {hasUpi &&
+            (!showUpiQr ? (
+              <button
+                onClick={() => setShowUpiQr(true)}
+                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 border-blue-200 text-blue-600 font-bold text-sm press"
+              >
                 <QrCode size={16} /> Show QR Code
               </button>
             ) : (
               <div className="flex flex-col items-center gap-3 py-2">
                 <div className="w-44 h-44 rounded-2xl bg-gray-50 border-2 border-gray-200 flex items-center justify-center overflow-hidden">
                   {qrLoading && <Loader2 size={28} className="text-gray-300 animate-spin" />}
-                  {!qrLoading && qrSrc && <img src={qrSrc} alt="UPI QR" width={168} height={168} className="rounded-xl" />}
-                  {!qrLoading && !qrSrc && <p className="text-xs text-gray-400">QR unavailable</p>}
+                  {!qrLoading && qrSrc && (
+                    <img src={qrSrc} alt="UPI QR" width={168} height={168} className="rounded-xl" />
+                  )}
+                  {!qrLoading && !qrSrc && (
+                    <p className="text-xs text-gray-400">QR unavailable</p>
+                  )}
                 </div>
                 <p className="text-xs text-gray-500 font-semibold">{session?.upiId}</p>
               </div>
-            )
-          )}
-          <label className={`flex items-center gap-3 p-3 rounded-2xl border-2 cursor-pointer select-none transition-colors ${
-            upiConfirmed ? "border-primary-500 bg-primary-50" : "border-gray-200 bg-white"
-          }`}>
-            <input type="checkbox" checked={upiConfirmed} onChange={(e) => setUpiConfirmed(e.target.checked)}
-              className="w-5 h-5 accent-primary-500 shrink-0" />
-            <span className="text-sm font-bold text-gray-700">Payment received on UPI</span>
+            ))}
+          <label
+            className={`flex items-center gap-3 p-3 rounded-2xl border-2 cursor-pointer select-none transition-colors ${
+              upiConfirmed
+                ? "border-primary-500 bg-primary-50"
+                : "border-gray-200 bg-white"
+            }`}
+          >
+            <input
+              type="checkbox"
+              checked={upiConfirmed}
+              onChange={(e) => setUpiConfirmed(e.target.checked)}
+              className="w-5 h-5 accent-primary-500 shrink-0"
+            />
+            <span className="text-sm font-bold text-gray-700">
+              Payment received on UPI
+            </span>
           </label>
         </div>
       )}
@@ -529,25 +836,42 @@ function CloseTableCheckout({
           <div className="flex gap-3">
             <div className="flex-1">
               <label className="text-xs text-gray-500 font-semibold block mb-1">Cash</label>
-              <input type="number" className="bm-input" placeholder="0"
-                value={splitCash} onChange={(e) => setSplitCash(e.target.value)} />
+              <input
+                type="number"
+                className="bm-input"
+                placeholder="0"
+                value={splitCash}
+                onChange={(e) => setSplitCash(e.target.value)}
+              />
             </div>
             <div className="flex-1">
               <label className="text-xs text-gray-500 font-semibold block mb-1">UPI</label>
-              <input type="number" className="bm-input" placeholder="0"
-                value={splitUpi} onChange={(e) => setSplitUpi(e.target.value)} />
+              <input
+                type="number"
+                className="bm-input"
+                placeholder="0"
+                value={splitUpi}
+                onChange={(e) => setSplitUpi(e.target.value)}
+              />
             </div>
           </div>
-          <div className={`rounded-xl py-2 px-3 text-sm font-bold text-center ${
-            splitOk ? "bg-green-50 text-green-700" : "bg-gray-50 text-gray-500"
-          }`}>
-            {splitOk ? `Covered (${fmtRupee(splitTotal)})` : `Need ${fmtRupee(totalPaise)} · have ${fmtRupee(splitTotal)}`}
+          <div
+            className={`rounded-xl py-2 px-3 text-sm font-bold text-center ${
+              splitOk ? "bg-green-50 text-green-700" : "bg-gray-50 text-gray-500"
+            }`}
+          >
+            {splitOk
+              ? `Covered (${fmtRupee(splitTotal)})`
+              : `Need ${fmtRupee(totalPaise)} · have ${fmtRupee(splitTotal)}`}
           </div>
         </div>
       )}
 
-      <button disabled={!canConfirm} onClick={handleConfirm}
-        className="w-full h-14 bg-primary-500 text-white rounded-2xl font-black text-lg disabled:opacity-40 press shadow-md flex items-center justify-center gap-2">
+      <button
+        disabled={!canConfirm}
+        onClick={handleConfirm}
+        className="w-full h-14 bg-primary-500 text-white rounded-2xl font-black text-lg disabled:opacity-40 press shadow-md flex items-center justify-center gap-2"
+      >
         {placing && <Loader2 size={18} className="animate-spin" />}
         {placing ? "Processing..." : `Collect ${fmtRupee(totalPaise)} & Close`}
       </button>
@@ -555,6 +879,7 @@ function CloseTableCheckout({
   );
 }
 
+// ─── AddItemsModal ────────────────────────────────────────────────────────────
 function AddItemsModal({
   tab,
   onClose,
@@ -570,7 +895,10 @@ function AddItemsModal({
   const addItem = (item: (typeof state.menuItems)[0]) => {
     setLocalCart((prev) => {
       const ex = prev.find((c) => c.menuItemId === item.id);
-      if (ex) return prev.map((c) => (c.menuItemId === item.id ? { ...c, qty: c.qty + 1 } : c));
+      if (ex)
+        return prev.map((c) =>
+          c.menuItemId === item.id ? { ...c, qty: c.qty + 1 } : c
+        );
       return [
         ...prev,
         {
@@ -591,42 +919,53 @@ function AddItemsModal({
     <Modal open={!!tab} onClose={onClose} title={`Add to Table ${tab.tableNumber}`}>
       <div className="flex flex-col" style={{ maxHeight: "75dvh" }}>
         <div className="flex-1 overflow-y-auto px-5 py-3 space-y-1">
-          {state.menuItems.filter((i) => i.isAvailable).map((item) => {
-            const inCart = localCart.find((c) => c.menuItemId === item.id);
-            return (
-              <div key={item.id} className="flex items-center justify-between py-2.5 border-b border-gray-50">
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-bold text-gray-900 truncate">{item.name}</p>
-                  <p className="text-xs text-gray-400">{fmtRupee(item.pricePaise)}</p>
+          {state.menuItems
+            .filter((i) => i.isAvailable)
+            .map((item) => {
+              const inCart = localCart.find((c) => c.menuItemId === item.id);
+              return (
+                <div
+                  key={item.id}
+                  className="flex items-center justify-between py-2.5 border-b border-gray-50"
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold text-gray-900 truncate">{item.name}</p>
+                    <p className="text-xs text-gray-400">{fmtRupee(item.pricePaise)}</p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0 ml-3">
+                    {inCart && (
+                      <>
+                        <button
+                          onClick={() =>
+                            setLocalCart((p) =>
+                              p
+                                .map((c) =>
+                                  c.menuItemId === item.id
+                                    ? { ...c, qty: c.qty - 1 }
+                                    : c
+                                )
+                                .filter((c) => c.qty > 0)
+                            )
+                          }
+                          className="w-7 h-7 rounded-full border border-gray-200 flex items-center justify-center text-primary-500 press font-bold"
+                        >
+                          -
+                        </button>
+                        <span className="text-sm font-black text-gray-900 w-5 text-center">
+                          {inCart.qty}
+                        </span>
+                      </>
+                    )}
+                    <button
+                      onClick={() => addItem(item)}
+                      className="w-7 h-7 rounded-full bg-primary-500 flex items-center justify-center press"
+                    >
+                      <Plus size={14} className="text-white" />
+                    </button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2 shrink-0 ml-3">
-                  {inCart && (
-                    <>
-                      <button
-                        onClick={() =>
-                          setLocalCart((p) =>
-                            p
-                              .map((c) => (c.menuItemId === item.id ? { ...c, qty: c.qty - 1 } : c))
-                              .filter((c) => c.qty > 0)
-                          )
-                        }
-                        className="w-7 h-7 rounded-full border border-gray-200 flex items-center justify-center text-primary-500 press font-bold"
-                      >
-                        -
-                      </button>
-                      <span className="text-sm font-black text-gray-900 w-5 text-center">{inCart.qty}</span>
-                    </>
-                  )}
-                  <button
-                    onClick={() => addItem(item)}
-                    className="w-7 h-7 rounded-full bg-primary-500 flex items-center justify-center press"
-                  >
-                    <Plus size={14} className="text-white" />
-                  </button>
-                </div>
-              </div>
-            );
-          })}
+              );
+            })}
         </div>
         {localCart.length > 0 && (
           <div className="px-5 pb-5 pt-3 border-t border-gray-100">
@@ -634,7 +973,8 @@ function AddItemsModal({
               onClick={() => onAdd(localCart)}
               className="w-full h-12 bg-primary-500 text-white rounded-2xl font-bold press shadow-md"
             >
-              Add {localCart.reduce((s, i) => s + i.qty, 0)} items · {fmtRupee(totalNew)}
+              Add {localCart.reduce((s, i) => s + i.qty, 0)} items ·{" "}
+              {fmtRupee(totalNew)}
             </button>
           </div>
         )}
@@ -643,6 +983,7 @@ function AddItemsModal({
   );
 }
 
+// ─── Main Page ────────────────────────────────────────────────────────────────
 export default function OrdersPage() {
   const { state, openTableAddItems, showToast } = useApp();
   const uid = state.session?.userId ?? "default";
@@ -650,6 +991,8 @@ export default function OrdersPage() {
   const [allOrders, setAllOrders]     = useState<Order[]>([]);
   const [filter, setFilter]           = useState<"today" | "all">("today");
   const [tab, setTab]                 = useState<"orders" | "tables">("orders");
+  // "map" = table map view, "list" = existing card list
+  const [tableView, setTableView]     = useState<"map" | "list">("map");
   const [syncing, setSyncing]         = useState(false);
   const [expanded, setExpanded]       = useState<string | null>(null);
   const [addingTo, setAddingTo]       = useState<OpenTable | null>(null);
@@ -659,6 +1002,7 @@ export default function OrdersPage() {
   const isOwner          = state.session?.role === "owner";
   const openTableEnabled = state.session?.stockSettings?.openTableBilling ?? false;
   const kotEnabled       = state.session?.stockSettings?.kotEnabled ?? false;
+  const tableCount       = state.session?.stockSettings?.tableCount ?? 0;
 
   useEffect(() => {
     import("@/lib/db").then(({ dbGetAllOrders }) =>
@@ -684,7 +1028,9 @@ export default function OrdersPage() {
   const handleAddItems = async (items: CartItem[]) => {
     if (!addingTo) return;
     await openTableAddItems(addingTo.tableNumber, items);
-    showToast(`Added ${items.reduce((s, i) => s + i.qty, 0)} items to Table ${addingTo.tableNumber}`);
+    showToast(
+      `Added ${items.reduce((s, i) => s + i.qty, 0)} items to Table ${addingTo.tableNumber}`
+    );
     setAddingTo(null);
   };
 
@@ -693,11 +1039,16 @@ export default function OrdersPage() {
     setBilledOrder(order);
   };
 
+  // When user taps a table card in the map, open the close/bill modal
+  const handleMapTableSelect = (openTab: OpenTable) => {
+    setClosingTab(openTab);
+  };
+
   return (
     <AppShell>
       <div className="min-h-screen bg-gray-50">
 
-        {/* Header */}
+        {/* ── Header ─────────────────────────────────────────────────────── */}
         <div className="bg-white px-4 lg:px-8 pt-12 lg:pt-6 pb-4 shadow-sm">
           <div className="flex items-center justify-between">
             <h1 className="text-xl font-black text-gray-900">Orders</h1>
@@ -720,109 +1071,182 @@ export default function OrdersPage() {
                   key={t}
                   onClick={() => setTab(t)}
                   className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${
-                    tab === t ? "bg-white text-gray-900 shadow-sm" : "text-gray-400"
+                    tab === t
+                      ? "bg-white text-gray-900 shadow-sm"
+                      : "text-gray-400"
                   }`}
                 >
-                  {t === "orders" ? "Orders" : `Open Tables (${state.openTables.length})`}
+                  {t === "orders"
+                    ? "Orders"
+                    : `Open Tables (${state.openTables.length})`}
                 </button>
               ))}
             </div>
           )}
         </div>
 
-        {/* Content — full width, left-aligned on desktop */}
+        {/* ── Content ────────────────────────────────────────────────────── */}
         <div className="px-4 lg:px-8 py-4 space-y-4 w-full">
 
-          {/* Open Tables tab */}
+          {/* ── Open Tables tab ─────────────────────────────────────────── */}
           {openTableEnabled && tab === "tables" && (
             <>
               {state.openTables.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-16 text-gray-300">
                   <Clock size={48} className="mb-3" />
                   <p className="font-semibold text-gray-400">No open tables</p>
-                  <p className="text-sm mt-1">Hold a cart to a table from the POS screen</p>
+                  <p className="text-sm mt-1">
+                    Hold a cart to a table from the POS screen
+                  </p>
                 </div>
               ) : (
-                state.openTables.map((openTab) => {
-                  const tabTotal = openTab.items.reduce((s, i) => {
-                    const ao = i.selectedAddOns.reduce((x, a) => x + a.pricePaise, 0);
-                    return s + (i.unitPricePaise + ao) * i.qty;
-                  }, 0);
-                  const itemCount = openTab.items.reduce((s, i) => s + i.qty, 0);
-                  const dur = Math.round(
-                    (Date.now() - new Date(openTab.openedAt).getTime()) / 60000
-                  );
-                  return (
-                    <div key={openTab.id} className="bg-white rounded-2xl shadow-sm overflow-hidden">
-                      <div className="px-4 py-3 flex items-center justify-between">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-base font-black text-gray-900">
-                              Table {openTab.tableNumber}
-                            </span>
-                            <span className="text-[10px] font-bold bg-amber-50 text-amber-600 px-2 py-0.5 rounded-full flex items-center gap-1">
-                              <Clock size={9} /> {dur}m open
-                            </span>
+                <>
+                  {/* View toggle: Map / List */}
+                  <div className="flex items-center justify-end gap-1.5">
+                    <button
+                      onClick={() => setTableView("map")}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all press ${
+                        tableView === "map"
+                          ? "bg-primary-500 text-white border-primary-500"
+                          : "bg-white text-gray-500 border-gray-200"
+                      }`}
+                    >
+                      <LayoutGrid size={13} />
+                      Map
+                    </button>
+                    <button
+                      onClick={() => setTableView("list")}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all press ${
+                        tableView === "list"
+                          ? "bg-primary-500 text-white border-primary-500"
+                          : "bg-white text-gray-500 border-gray-200"
+                      }`}
+                    >
+                      <List size={13} />
+                      List
+                    </button>
+                  </div>
+
+                  {/* ── MAP VIEW ─────────────────────────────────────────── */}
+                  {tableView === "map" && (
+                    <TableMapPanel
+                      openTables={state.openTables}
+                      tableCount={tableCount}
+                      onSelectTable={handleMapTableSelect}
+                    />
+                  )}
+
+                  {/* ── LIST VIEW ────────────────────────────────────────── */}
+                  {tableView === "list" &&
+                    state.openTables.map((openTab) => {
+                      const tabTotal = openTab.items.reduce((s, i) => {
+                        const ao = i.selectedAddOns.reduce(
+                          (x, a) => x + a.pricePaise,
+                          0
+                        );
+                        return s + (i.unitPricePaise + ao) * i.qty;
+                      }, 0);
+                      const itemCount = openTab.items.reduce(
+                        (s, i) => s + i.qty,
+                        0
+                      );
+                      const dur = getTableDurMin(openTab.openedAt);
+                      return (
+                        <div
+                          key={openTab.id}
+                          className="bg-white rounded-2xl shadow-sm overflow-hidden"
+                        >
+                          <div className="px-4 py-3 flex items-center justify-between">
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-base font-black text-gray-900">
+                                  Table {openTab.tableNumber}
+                                </span>
+                                <span
+                                  className={`text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 ${
+                                    dur >= 45
+                                      ? "bg-orange-50 text-orange-600"
+                                      : "bg-amber-50 text-amber-600"
+                                  }`}
+                                >
+                                  <Clock size={9} /> {dur}m open
+                                </span>
+                              </div>
+                              <p className="text-xs text-gray-400 mt-0.5">
+                                {itemCount} item{itemCount !== 1 ? "s" : ""} ·
+                                Running bill:{" "}
+                                <span className="font-bold text-gray-700">
+                                  {fmtRupee(tabTotal)}
+                                </span>
+                              </p>
+                            </div>
                           </div>
-                          <p className="text-xs text-gray-400 mt-0.5">
-                            {itemCount} item{itemCount !== 1 ? "s" : ""} · Running bill:{" "}
-                            <span className="font-bold text-gray-700">{fmtRupee(tabTotal)}</span>
-                          </p>
+
+                          <div className="px-4 pb-2 space-y-1">
+                            {openTab.items.map((item, i) => (
+                              <div
+                                key={i}
+                                className="flex justify-between text-sm text-gray-600"
+                              >
+                                <span>
+                                  {item.qty}x {item.name}
+                                  {item.selectedPortion
+                                    ? ` (${item.selectedPortion})`
+                                    : ""}
+                                </span>
+                                <span className="font-medium">
+                                  {fmtRupee(
+                                    (item.unitPricePaise +
+                                      item.selectedAddOns.reduce(
+                                        (s, a) => s + a.pricePaise,
+                                        0
+                                      )) *
+                                      item.qty
+                                  )}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="px-4 pb-4 pt-2 flex gap-2">
+                            <button
+                              onClick={() => setAddingTo(openTab)}
+                              className="flex-1 h-10 flex items-center justify-center gap-1.5 rounded-xl border-2 border-primary-200 text-primary-600 text-sm font-bold press"
+                            >
+                              <Plus size={14} /> Add Items
+                            </button>
+                            <button
+                              onClick={() => setClosingTab(openTab)}
+                              className="flex-1 h-10 flex items-center justify-center gap-1.5 rounded-xl bg-primary-500 text-white text-sm font-bold press shadow-sm"
+                            >
+                              <CheckCircle size={14} /> Close & Bill
+                            </button>
+                          </div>
                         </div>
-                      </div>
-
-                      <div className="px-4 pb-2 space-y-1">
-                        {openTab.items.map((item, i) => (
-                          <div key={i} className="flex justify-between text-sm text-gray-600">
-                            <span>
-                              {item.qty}x {item.name}
-                              {item.selectedPortion ? ` (${item.selectedPortion})` : ""}
-                            </span>
-                            <span className="font-medium">
-                              {fmtRupee(
-                                (item.unitPricePaise +
-                                  item.selectedAddOns.reduce((s, a) => s + a.pricePaise, 0)) *
-                                  item.qty
-                              )}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-
-                      <div className="px-4 pb-4 pt-2 flex gap-2">
-                        <button
-                          onClick={() => setAddingTo(openTab)}
-                          className="flex-1 h-10 flex items-center justify-center gap-1.5 rounded-xl border-2 border-primary-200 text-primary-600 text-sm font-bold press"
-                        >
-                          <Plus size={14} /> Add Items
-                        </button>
-                        <button
-                          onClick={() => setClosingTab(openTab)}
-                          className="flex-1 h-10 flex items-center justify-center gap-1.5 rounded-xl bg-primary-500 text-white text-sm font-bold press shadow-sm"
-                        >
-                          <CheckCircle size={14} /> Close & Bill
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })
+                      );
+                    })}
+                </>
               )}
             </>
           )}
 
-          {/* Orders tab */}
+          {/* ── Orders tab ──────────────────────────────────────────────── */}
           {(!openTableEnabled || tab === "orders") && (
             <>
               <div className="grid grid-cols-2 gap-3">
                 <div className="bg-primary-500 rounded-2xl p-4 text-white">
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-bold text-primary-100">Today&apos;s Sales</span>
+                    <span className="text-xs font-bold text-primary-100">
+                      Today&apos;s Sales
+                    </span>
                     <div className="w-8 h-8 rounded-xl bg-white/20 flex items-center justify-center">
                       <TrendingUp size={16} className="text-white" />
                     </div>
                   </div>
                   <p className="text-xl font-black">{fmtRupee(todaySales)}</p>
-                  <p className="text-xs text-primary-200 mt-1">{todayOrders.length} orders</p>
+                  <p className="text-xs text-primary-200 mt-1">
+                    {todayOrders.length} orders
+                  </p>
                 </div>
                 <div className="bg-white rounded-2xl p-4 shadow-sm">
                   <div className="flex items-center justify-between mb-2">
@@ -831,16 +1255,24 @@ export default function OrdersPage() {
                       <Banknote size={16} className="text-gray-400" />
                     </div>
                   </div>
-                  <p className="text-xl font-black text-gray-900">{fmtRupee(totalSales)}</p>
+                  <p className="text-xl font-black text-gray-900">
+                    {fmtRupee(totalSales)}
+                  </p>
                   <p className="text-xs text-gray-400 mt-1">{allOrders.length} orders</p>
                 </div>
               </div>
 
               <div className="flex items-center gap-2 px-3 py-2 bg-white rounded-xl shadow-sm text-xs font-semibold">
                 {isSupabaseEnabled() ? (
-                  <><Cloud size={14} className="text-green-500" /><span className="text-green-600">Cloud sync enabled</span></>
+                  <>
+                    <Cloud size={14} className="text-green-500" />
+                    <span className="text-green-600">Cloud sync enabled</span>
+                  </>
                 ) : (
-                  <><CloudOff size={14} className="text-gray-400" /><span className="text-gray-400">Offline only</span></>
+                  <>
+                    <CloudOff size={14} className="text-gray-400" />
+                    <span className="text-gray-400">Offline only</span>
+                  </>
                 )}
               </div>
 
@@ -850,10 +1282,14 @@ export default function OrdersPage() {
                     key={f}
                     onClick={() => setFilter(f)}
                     className={`flex-1 py-2 rounded-xl text-sm font-bold transition-all ${
-                      filter === f ? "bg-white text-gray-900 shadow-sm" : "text-gray-400"
+                      filter === f
+                        ? "bg-white text-gray-900 shadow-sm"
+                        : "text-gray-400"
                     }`}
                   >
-                    {f === "today" ? `Today (${todayOrders.length})` : `All (${allOrders.length})`}
+                    {f === "today"
+                      ? `Today (${todayOrders.length})`
+                      : `All (${allOrders.length})`}
                   </button>
                 ))}
               </div>
@@ -868,39 +1304,50 @@ export default function OrdersPage() {
                 displayed.map((order) => {
                   const isOpen = expanded === order.id;
                   return (
-                    <div key={order.id} className="bg-white rounded-2xl shadow-sm overflow-hidden">
+                    <div
+                      key={order.id}
+                      className="bg-white rounded-2xl shadow-sm overflow-hidden"
+                    >
                       <button
                         onClick={() => setExpanded(isOpen ? null : order.id)}
                         className="w-full flex items-center px-4 py-3 gap-3 press text-left"
                       >
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <p className="font-bold text-gray-900 text-sm">#{order.billNumber}</p>
+                            <p className="font-bold text-gray-900 text-sm">
+                              #{order.billNumber}
+                            </p>
                             {order.tableNumber && (
                               <span className="text-[10px] font-bold bg-primary-50 text-primary-600 px-2 py-0.5 rounded-full">
                                 T{order.tableNumber}
                               </span>
                             )}
-                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                              order.syncStatus === "synced"
-                                ? "bg-green-50 text-green-600"
-                                : order.syncStatus === "failed"
-                                ? "bg-red-50 text-red-500"
-                                : "bg-gray-100 text-gray-400"
-                            }`}>
+                            <span
+                              className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                                order.syncStatus === "synced"
+                                  ? "bg-green-50 text-green-600"
+                                  : order.syncStatus === "failed"
+                                  ? "bg-red-50 text-red-500"
+                                  : "bg-gray-100 text-gray-400"
+                              }`}
+                            >
                               {order.syncStatus}
                             </span>
                           </div>
                           <p className="text-xs text-gray-400 mt-0.5">
                             {fmtTime(order.createdAt)} &middot;{" "}
-                            {PAY_LABEL[order.paymentMethod] ?? order.paymentMethod} &middot;{" "}
+                            {PAY_LABEL[order.paymentMethod] ?? order.paymentMethod}{" "}
+                            &middot;{" "}
                             {SERVICE_LABEL[order.serviceMode] ?? order.serviceMode}
                           </p>
                         </div>
                         <div className="text-right shrink-0">
-                          <p className="font-black text-gray-900">{fmtRupee(order.totalPaise)}</p>
+                          <p className="font-black text-gray-900">
+                            {fmtRupee(order.totalPaise)}
+                          </p>
                           <p className="text-xs text-gray-400">
-                            {order.items.length} item{order.items.length > 1 ? "s" : ""}
+                            {order.items.length} item
+                            {order.items.length > 1 ? "s" : ""}
                           </p>
                         </div>
                         {isOpen ? (
@@ -913,7 +1360,10 @@ export default function OrdersPage() {
                       {isOpen && (
                         <div className="border-t border-gray-50 px-4 py-3 space-y-2">
                           {order.items.map((item, i) => {
-                            const ao = item.selectedAddOns.reduce((s, a) => s + a.pricePaise, 0);
+                            const ao = item.selectedAddOns.reduce(
+                              (s, a) => s + a.pricePaise,
+                              0
+                            );
                             return (
                               <div key={i} className="flex justify-between text-sm">
                                 <div className="flex-1 min-w-0">
@@ -927,11 +1377,16 @@ export default function OrdersPage() {
                                   )}
                                   {item.selectedAddOns.length > 0 && (
                                     <p className="text-xs text-gray-400">
-                                      + {item.selectedAddOns.map((a) => a.name).join(", ")}
+                                      +{" "}
+                                      {item.selectedAddOns
+                                        .map((a) => a.name)
+                                        .join(", ")}
                                     </p>
                                   )}
                                   {item.notes && (
-                                    <p className="text-xs text-primary-400 italic">-&gt; {item.notes}</p>
+                                    <p className="text-xs text-primary-400 italic">
+                                      -&gt; {item.notes}
+                                    </p>
                                   )}
                                 </div>
                                 <span className="font-semibold text-gray-700 shrink-0 ml-2">
