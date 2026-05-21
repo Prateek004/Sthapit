@@ -1,0 +1,166 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Google Fonts ── */
+@import url('https://fonts.googleapis.com/css2?family=Syne:wght@800&family=Instrument+Serif:ital@1&family=DM+Sans:wght@400;500;600;700;800&display=swap');
+
+* {
+  -webkit-tap-highlight-color: transparent;
+  box-sizing: border-box;
+}
+
+html {
+  height: -webkit-fill-available;
+  overscroll-behavior: none;
+}
+body {
+  min-height: -webkit-fill-available;
+  overscroll-behavior: none;
+  font-family: 'DM Sans', sans-serif;
+  background: #FEF9F4;
+  color: #1A1208;
+}
+
+/* ── Sth1r Design Tokens ── */
+:root {
+  /* Fire scale */
+  --fire-50:  #FEF0E8;
+  --fire-100: #FACDB0;
+  --fire-200: #F49668;
+  --fire-400: #E8590C;
+  --fire-600: #B83E06;
+  --fire-800: #7C2600;
+
+  /* Coal/ember neutrals */
+  --cream:  #FEF9F4;
+  --sand:   #FDF6EE;
+  --ember:  #F0E8DF;
+  --ash:    #7A6456;
+  --smoke:  #3D2E1E;
+  --coal:   #1A1208;
+
+  /* Semantic */
+  --veg:    #2D6A4F;
+  --nonveg: #C0392B;
+  --sync-ok: #2D6A4F;
+  --sync-pending: #B07D00;
+  --sync-fail: #C0392B;
+
+  /* Shadows */
+  --shadow-1: 0 2px 8px rgba(26,18,8,0.06), 0 0 0 1px rgba(26,18,8,0.05);
+  --shadow-2: 0 8px 32px rgba(26,18,8,0.10), 0 0 0 1px rgba(26,18,8,0.05);
+
+  /* Legacy compat (keep so old components don't break) */
+  --tc-600: #B83E06;
+  --tc-400: #E8590C;
+  --tc-50:  #FEF0E8;
+  --sand2:  #F0E8DF;
+  --ink:    #1A1208;
+  --ink2:   #3D2E1E;
+  --ink3:   #7A6456;
+}
+
+/* ── Fonts ── */
+.font-syne       { font-family: 'Syne', sans-serif; font-weight: 800; }
+.font-instrument { font-family: 'Instrument Serif', serif; font-style: italic; }
+.font-dm         { font-family: 'DM Sans', sans-serif; }
+
+/* ── Utilities ── */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+.press:active { transform: scale(0.97); transition: transform 0.12s cubic-bezier(0.16,1,0.3,1); }
+
+/* ── Animations ── */
+@keyframes slide-up {
+  from { transform: translateY(100%); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+.slide-up { animation: slide-up 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.fade-in { animation: fade-in 0.2s cubic-bezier(0.16, 1, 0.3, 1); }
+
+@keyframes toast-in {
+  from { transform: translateX(110%); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+.toast-in { animation: toast-in 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
+
+@keyframes toast-out {
+  from { opacity: 1; }
+  to   { opacity: 0; transform: translateX(110%); }
+}
+
+@keyframes badge-pop {
+  0%   { transform: scale(1); }
+  50%  { transform: scale(1.2); }
+  100% { transform: scale(1); }
+}
+.badge-pop { animation: badge-pop 0.2s cubic-bezier(0.16, 1, 0.3, 1); }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { animation: spin 1s linear infinite; }
+
+@keyframes sync-spin { to { transform: rotate(360deg); } }
+.sync-spin { animation: sync-spin 1.2s linear infinite; }
+
+@keyframes sth1r-pulse {
+  0%, 100% { opacity: 0.5; }
+  50%       { opacity: 1;   }
+}
+
+/* Respect reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Form inputs ── */
+.bm-input {
+  width: 100%;
+  height: 42px;
+  padding: 0 16px;
+  border-radius: 50px;
+  border: 1px solid var(--ember);
+  background: var(--sand);
+  font-size: 14px;
+  font-family: 'DM Sans', sans-serif;
+  font-weight: 500;
+  color: var(--coal);
+  outline: none;
+  transition: border-color 0.15s, background 0.15s;
+}
+.bm-input:focus {
+  border: 1.5px solid var(--fire-400);
+  background: white;
+}
+.bm-input::placeholder { color: var(--ash); }
+
+/* ── iOS safe area ── */
+.safe-bottom {
+  padding-bottom: max(env(safe-area-inset-bottom, 0px), 10px);
+}
+
+/* Number input no spinner */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; }
+input[type="number"] { -moz-appearance: textfield; }
+
+/* ── Focus ring ── */
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(232, 89, 12, 0.3);
+}
+
+/* ── Print ── */
+@media print {
+  body { background: white !important; }
+  nav, aside, .no-print { display: none !important; }
+}
