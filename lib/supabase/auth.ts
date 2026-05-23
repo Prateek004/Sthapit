@@ -16,7 +16,6 @@ export interface SignUpData {
   businessType: string;
 }
 
-// ── Local auth (offline / no Supabase) ───────────────────────────────────────
 const LOCAL_USERS_KEY = "sth1r_local_users";
 const LEGACY_LOCAL_USERS_KEY = "vynn_local_users";
 
@@ -80,7 +79,7 @@ async function localSignUp(data: SignUpData): Promise<AuthResult> {
   const users = getLocalUsers();
   const username = data.username.toLowerCase().trim();
   if (users.some((u) => u.username === username)) {
-    return { ok: true }; // already exists locally — fine
+    return { ok: true };
   }
   const salt = generateSalt();
   const passwordHash = await hashPassword(data.password, salt);
@@ -111,7 +110,6 @@ function isRateLimitError(msg: string): boolean {
 export async function signUp(data: SignUpData): Promise<AuthResult> {
   const sb = getSupabase();
 
-  // ── Offline / no Supabase ──
   if (!sb) {
     return localSignUp(data);
   }
@@ -134,45 +132,39 @@ export async function signUp(data: SignUpData): Promise<AuthResult> {
       },
     });
 
-    if (error) {
-      if (isRateLimitError(error.message)) {
-        return { ok: false, error: error.message };
-      }
-      console.warn("[Sth1r] Supabase signUp error, falling back to local:", error.message);
+    if (error && isRateLimitError(error.message)) {
+      return { ok: false, error: error.message };
     }
 
-    // Always save locally — works offline and survives email-confirm flows
+    // Always save locally regardless of Supabase result
     await localSignUp(data);
     return { ok: true };
-  } catch (fetchErr) {
-    console.warn("[Sth1r] Supabase signUp network error, falling back to local:", fetchErr);
+  } catch {
     return localSignUp(data);
   }
 }
 
+type SignInResult = AuthResult & {
+  userId?: string;
+  role?: UserRole;
+  businessName?: string;
+  businessType?: string;
+  gstPercent?: number;
+  upiId?: string;
+  ownerName?: string;
+};
+
 export async function signIn(
   username: string,
   password: string
-): Promise
-  AuthResult & {
-    userId?: string;
-    role?: UserRole;
-    businessName?: string;
-    businessType?: string;
-    gstPercent?: number;
-    upiId?: string;
-    ownerName?: string;
-  }
-> {
+): Promise<SignInResult> {
   const sb = getSupabase();
   const normalizedUsername = username.toLowerCase().trim();
 
-  // ── Always try local first — fastest, works offline ──
   const localResult = await localSignIn(normalizedUsername, password);
 
   if (!sb) return localResult;
 
-  // ── Try Supabase for cloud userId ──
   const email = `${normalizedUsername}@sth1r.app`;
   try {
     const { data: signInData, error } = await sb.auth.signInWithPassword({
@@ -181,15 +173,7 @@ export async function signIn(
     });
 
     if (error) {
-      // Any Supabase error — fall back to local result
       if (localResult.ok) return localResult;
-      // Local also failed — give a clear message
-      if (
-        error.message.toLowerCase().includes("invalid login") ||
-        error.message.toLowerCase().includes("invalid credentials")
-      ) {
-        return { ok: false, error: "Invalid username or password" };
-      }
       if (isRateLimitError(error.message)) {
         return { ok: false, error: error.message };
       }
@@ -218,7 +202,6 @@ export async function signIn(
       ownerName: profile.owner_name,
     };
   } catch {
-    // Network error — use local
     return localResult.ok
       ? localResult
       : { ok: false, error: "Network error — please check connection" };
@@ -228,17 +211,7 @@ export async function signIn(
 async function localSignIn(
   username: string,
   password: string
-): Promise
-  AuthResult & {
-    userId?: string;
-    role?: UserRole;
-    businessName?: string;
-    businessType?: string;
-    gstPercent?: number;
-    upiId?: string;
-    ownerName?: string;
-  }
-> {
+): Promise<SignInResult> {
   const users = getLocalUsers();
   const user = users.find((u) => u.username === username);
   if (!user) return { ok: false, error: "Username not found" };
