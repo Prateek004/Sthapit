@@ -9,21 +9,73 @@ export default function Error({
   reset: () => void;
 }) {
   useEffect(() => {
-    console.error("[Vynn] Page error:", error);
+    console.error("[Sth1r] Page error:", error);
   }, [error]);
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 px-5">
-      <div className="w-14 h-14 rounded-3xl bg-red-100 flex items-center justify-center mb-4">
-        <span className="text-2xl">⚠️</span>
+    <div
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "#FEF9F4",
+        padding: "20px",
+      }}
+    >
+      <div
+        style={{
+          width: 56,
+          height: 56,
+          borderRadius: 14,
+          background: "#FEF0E8",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          marginBottom: 16,
+          fontSize: 28,
+        }}
+      >
+        ⚠️
       </div>
-      <h2 className="text-lg font-black text-gray-900 mb-1">Something went wrong</h2>
-      <p className="text-sm text-gray-400 text-center mb-6 max-w-xs">
+      <h2
+        style={{
+          fontFamily: "'Syne', sans-serif",
+          fontWeight: 800,
+          fontSize: 18,
+          color: "#1A1208",
+          marginBottom: 8,
+        }}
+      >
+        Something went wrong
+      </h2>
+      <p
+        style={{
+          fontSize: 13,
+          color: "#7A6456",
+          textAlign: "center",
+          marginBottom: 24,
+          maxWidth: 300,
+          fontFamily: "'DM Sans', sans-serif",
+          lineHeight: 1.6,
+        }}
+      >
         {error.message || "An unexpected error occurred. Your data is safe."}
       </p>
       <button
         onClick={reset}
-        className="px-6 py-3 bg-primary-500 text-white rounded-2xl font-bold text-sm shadow-md"
+        style={{
+          background: "#E8590C",
+          color: "white",
+          border: "none",
+          borderRadius: 50,
+          padding: "12px 28px",
+          fontWeight: 700,
+          cursor: "pointer",
+          fontSize: 14,
+          fontFamily: "'DM Sans', sans-serif",
+        }}
       >
         Try again
       </button>
