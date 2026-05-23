@@ -59,14 +59,16 @@ export default function CheckoutModal({
   const [splitUpi, setSplitUpi] = useState("");
   const [upiConfirmed, setUpiConfirmed] = useState(false);
   const [placing, setPlacing] = useState(false);
-  const [order, setOrder] = useState<Awaited<ReturnType<typeof placeOrder>> | null>(null);
+  const [order, setOrder] = useState<Awaited
+    ReturnType<typeof placeOrder>
+  > | null>(null);
   const [postTab, setPostTab] = useState<PostTab>("invoice");
   const [qrSrc, setQrSrc] = useState("");
   const [qrLoading, setQrLoading] = useState(false);
   const [showUpiQr, setShowUpiQr] = useState(false);
   const invoiceRef = useRef<HTMLDivElement>(null);
 
-  // Reset all state when modal opens
+  // Reset state on open
   useEffect(() => {
     if (open) {
       setMethod("cash");
@@ -81,12 +83,12 @@ export default function CheckoutModal({
     }
   }, [open]);
 
-  // Generate QR when user clicks Show QR
+  // Generate UPI QR
   useEffect(() => {
     if (!showUpiQr || !hasUpi) return;
     const amount = (totalPaise / 100).toFixed(2);
     const upiId = session?.upiId ?? "";
-    const name = encodeURIComponent(session?.businessName ?? "Vynn");
+    const name = encodeURIComponent(session?.businessName ?? "Sth1r");
     const upiStr = `upi://pay?pa=${upiId}&pn=${name}&am=${amount}&cu=INR`;
     const api = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(upiStr)}`;
     setQrSrc("");
@@ -110,12 +112,15 @@ export default function CheckoutModal({
     };
   }, [showUpiQr, hasUpi, totalPaise, session]);
 
+  // ── Derived payment values ──────────────────────────────────────────────
   const cashPaise = toP(Number(cashInput) || 0);
   const changePaise = Math.max(0, cashPaise - totalPaise);
+
   const splitCashP = toP(Number(splitCash) || 0);
   const splitUpiP = toP(Number(splitUpi) || 0);
   const splitTotal = splitCashP + splitUpiP;
   const splitOk = splitTotal >= totalPaise;
+  const splitShort = Math.max(0, totalPaise - splitTotal);
 
   const canConfirm =
     !placing &&
@@ -124,15 +129,26 @@ export default function CheckoutModal({
       (method === "split" && splitOk));
 
   const handleConfirm = async () => {
+    if (placing) return;
+
     if (!canConfirm) {
-      if (method === "cash")
-        showToast("Cash received is less than total", "error");
-      if (method === "split")
-        showToast("Split amounts don't cover total", "error");
-      if (method === "upi" && !upiConfirmed)
+      if (method === "cash" && cashInput === "")
+        showToast("Enter cash received amount", "error");
+      else if (method === "cash" && cashPaise < totalPaise)
+        showToast(
+          `Cash short by ${fmtRupee(totalPaise - cashPaise)}`,
+          "error"
+        );
+      else if (method === "split" && !splitOk)
+        showToast(
+          `Split short by ${fmtRupee(splitShort)}`,
+          "error"
+        );
+      else if (method === "upi" && !upiConfirmed)
         showToast("Confirm UPI payment received first", "error");
       return;
     }
+
     setPlacing(true);
     try {
       const placed = await placeOrder({
@@ -148,7 +164,7 @@ export default function CheckoutModal({
       setOrder(placed);
       setPostTab("invoice");
       setShowUpiQr(false);
-    } catch {
+    } catch (err) {
       showToast("Order failed. Try again.", "error");
       setPlacing(false);
     }
@@ -208,7 +224,7 @@ export default function CheckoutModal({
   const handleWhatsApp = () => {
     if (!order) return;
     const lines = [
-      `🧾 *Bill from ${session?.businessName ?? "Vynn"}*`,
+      `🧾 *Bill from ${session?.businessName ?? "Sth1r"}*`,
       `Bill #: ${order.billNumber}`,
       `Date: ${fmtDate(order.createdAt)}`,
       ``,
@@ -221,8 +237,8 @@ export default function CheckoutModal({
       order.discountPaise > 0
         ? `Discount: -${fmtRupee(order.discountPaise)}`
         : null,
-      gstPercent > 0
-        ? `GST (${gstPercent}%): ${fmtRupee(order.gstPaise)}`
+      order.gstPercent > 0
+        ? `GST (${order.gstPercent}%): ${fmtRupee(order.gstPaise)}`
         : null,
       `*Total: ${fmtRupee(order.totalPaise)}*`,
       `Payment: ${order.paymentMethod.toUpperCase()}`,
@@ -239,7 +255,7 @@ export default function CheckoutModal({
     onClose();
   };
 
-  // ── Pre-checkout screen ────────────────────────────────────────────────────
+  // ── Pre-checkout screen ───────────────────────────────────────────────────
   if (!order) {
     return (
       <Modal open={open} onClose={onClose} title="Checkout">
@@ -252,8 +268,19 @@ export default function CheckoutModal({
             </div>
             {discountPaise > 0 && (
               <div className="flex justify-between text-green-600">
-                <span>Discount</span>
+                <span>
+                  Discount
+                  {discountType === "percent" ? ` (${discountValue}%)` : ""}
+                </span>
                 <span className="font-semibold">−{fmtRupee(discountPaise)}</span>
+              </div>
+            )}
+            {discountPaise > 0 && (
+              <div className="flex justify-between text-gray-400 text-xs">
+                <span>Taxable</span>
+                <span className="font-semibold">
+                  {fmtRupee(subtotalPaise - discountPaise)}
+                </span>
               </div>
             )}
             {gstPercent > 0 && (
@@ -301,12 +328,15 @@ export default function CheckoutModal({
               <input
                 type="number"
                 autoFocus
+                min="0"
                 className={`w-full h-14 px-4 rounded-2xl border-2 outline-none text-2xl font-black transition-colors ${
                   cashInput !== "" && cashPaise < totalPaise
                     ? "border-red-400 bg-red-50 text-red-600"
+                    : cashInput !== "" && cashPaise >= totalPaise
+                    ? "border-green-400 bg-green-50"
                     : "border-gray-200 focus:border-primary-500"
                 }`}
-                placeholder="Cash received"
+                placeholder="Cash received (₹)"
                 value={cashInput}
                 onChange={(e) => setCashInput(e.target.value)}
               />
@@ -326,7 +356,7 @@ export default function CheckoutModal({
                 ))}
                 <button
                   onClick={() => setCashInput(String(totalPaise / 100))}
-                  className="px-3 py-1.5 rounded-xl border border-gray-200 font-bold text-sm text-gray-600 bg-white press"
+                  className="px-3 py-1.5 rounded-xl border border-primary-300 font-bold text-sm text-primary-600 bg-primary-50 press"
                 >
                   Exact
                 </button>
@@ -340,7 +370,7 @@ export default function CheckoutModal({
                   }`}
                 >
                   {cashPaise >= totalPaise
-                    ? `Change: ${fmtRupee(changePaise)}`
+                    ? `Change to return: ${fmtRupee(changePaise)}`
                     : `Short by ${fmtRupee(totalPaise - cashPaise)}`}
                 </div>
               )}
@@ -404,7 +434,6 @@ export default function CheckoutModal({
                 </p>
               )}
 
-              {/* Confirmation checkbox — must tick before confirm */}
               <label
                 className={`flex items-center gap-3 p-3 rounded-2xl border-2 cursor-pointer select-none transition-colors ${
                   upiConfirmed
@@ -432,10 +461,11 @@ export default function CheckoutModal({
               <div className="flex gap-3">
                 <div className="flex-1">
                   <label className="text-xs text-gray-500 font-semibold block mb-1">
-                    Cash ₹
+                    Cash (₹)
                   </label>
                   <input
                     type="number"
+                    min="0"
                     className="bm-input"
                     placeholder="0"
                     value={splitCash}
@@ -444,10 +474,11 @@ export default function CheckoutModal({
                 </div>
                 <div className="flex-1">
                   <label className="text-xs text-gray-500 font-semibold block mb-1">
-                    UPI ₹
+                    UPI (₹)
                   </label>
                   <input
                     type="number"
+                    min="0"
                     className="bm-input"
                     placeholder="0"
                     value={splitUpi}
@@ -459,12 +490,16 @@ export default function CheckoutModal({
                 className={`rounded-xl py-2 px-3 text-sm font-bold text-center ${
                   splitOk
                     ? "bg-green-50 text-green-700"
+                    : splitTotal > 0
+                    ? "bg-red-50 text-red-600"
                     : "bg-gray-50 text-gray-500"
                 }`}
               >
                 {splitOk
-                  ? `Covered ✓ (${fmtRupee(splitTotal)})`
-                  : `Need ${fmtRupee(totalPaise)} · have ${fmtRupee(splitTotal)}`}
+                  ? `Covered ✓  (${fmtRupee(splitTotal)})`
+                  : splitTotal > 0
+                  ? `Short by ${fmtRupee(splitShort)}`
+                  : `Need ${fmtRupee(totalPaise)}`}
               </div>
             </div>
           )}
@@ -475,14 +510,14 @@ export default function CheckoutModal({
             className="w-full h-14 bg-primary-500 text-white rounded-2xl font-black text-lg disabled:opacity-40 press shadow-md flex items-center justify-center gap-2"
           >
             {placing && <Loader2 size={18} className="animate-spin" />}
-            {placing ? "Processing…" : `Confirm ${fmtRupee(totalPaise)}`}
+            {placing ? "Processing…" : `Confirm · ${fmtRupee(totalPaise)}`}
           </button>
         </div>
       </Modal>
     );
   }
 
-  // ── Post-checkout screen ───────────────────────────────────────────────────
+  // ── Post-checkout screen ──────────────────────────────────────────────────
   const postTabs: { id: PostTab; label: string; Icon: React.ElementType }[] = [
     { id: "invoice", label: "Invoice", Icon: Printer },
     { id: "whatsapp", label: "WhatsApp", Icon: MessageCircle },
@@ -544,7 +579,7 @@ export default function CheckoutModal({
                 style={{ maxWidth: "320px" }}
               >
                 <div className="c b text-sm mb-1">
-                  {session?.businessName ?? "Vynn"}
+                  {session?.businessName ?? "Sth1r"}
                 </div>
                 <div className="border-t border-dashed border-gray-300 my-2" />
                 <div className="row">
