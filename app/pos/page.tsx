@@ -9,7 +9,7 @@ import ItemConfigModal from "@/components/pos/ItemConfigModal";
 import CartPanel from "@/components/pos/CartPanel";
 import AppShell from "@/components/ui/AppShell";
 import Modal from "@/components/ui/Modal";
-import { fmtRupee, calcGST } from "@/lib/utils";
+import { fmtRupee, calcGST, calcDiscount } from "@/lib/utils";
 import { Search, X } from "lucide-react";
 
 export default function POSPage() {
@@ -34,13 +34,15 @@ export default function POSPage() {
     return catOk && searchOk;
   });
 
-  const subtotal = cart.reduce((s, i) => {
+  // Cart totals for the floating button — mirrors CartPanel logic exactly
+  const subtotalPaise = cart.reduce((s, i) => {
     const ao = i.selectedAddOns.reduce((x, a) => x + a.pricePaise, 0);
     return s + (i.unitPricePaise + ao) * i.qty;
   }, 0);
   const gstPercent = session?.gstPercent ?? 0;
-  const gstPaise = calcGST(subtotal, gstPercent);
-  const cartTotal = subtotal + gstPaise;
+  // No discount applied at this stage (user hasn't entered one yet)
+  const gstPaise = calcGST(subtotalPaise, gstPercent);
+  const cartTotal = subtotalPaise + gstPaise;
   const cartCount = cart.reduce((s, i) => s + i.qty, 0);
 
   const scrollCatIntoView = (id: string) => {
@@ -68,20 +70,11 @@ export default function POSPage() {
 
   return (
     <AppShell>
-      {/*
-        AppShell already provides the sidebar on desktop and the bottom nav
-        on mobile. We just need to fill the content area.
-
-        On desktop: side-by-side menu + cart panels
-        On mobile:  full-screen menu + floating cart button → drawer
-      */}
       <div
         className="flex overflow-hidden"
-        // Fill the content area exactly — AppShell's <main> is overflow-y-auto
-        // but POS needs its own internal scroll, not the shell's scroll.
         style={{ height: "calc(100dvh - 0px)" }}
       >
-        {/* ── Menu panel — always visible ── */}
+        {/* ── Menu panel ── */}
         <div className="flex flex-col overflow-hidden flex-1 min-w-0 relative">
           <MenuPanel
             bizName={session?.businessName}
@@ -95,7 +88,7 @@ export default function POSPage() {
             mobileCompact
           />
 
-          {/* Mobile floating "View Cart" button — sits above the bottom nav */}
+          {/* Mobile floating "View Cart" button */}
           {cartCount > 0 && (
             <button
               onClick={() => setCartOpen(true)}
@@ -104,7 +97,9 @@ export default function POSPage() {
               <div className="w-8 h-8 rounded-xl bg-white/20 flex items-center justify-center mr-3 shrink-0">
                 <span className="text-white text-sm font-black">{cartCount}</span>
               </div>
-              <span className="text-white font-bold flex-1 text-left">View Cart</span>
+              <span className="text-white font-bold flex-1 text-left">
+                View Cart
+              </span>
               <span className="text-white font-black text-lg">
                 {fmtRupee(cartTotal)}
               </span>
@@ -112,7 +107,7 @@ export default function POSPage() {
           )}
         </div>
 
-        {/* ── Desktop cart panel — hidden on mobile ── */}
+        {/* ── Desktop cart panel ── */}
         <div className="hidden lg:flex flex-col overflow-hidden border-l border-gray-100 bg-white w-80 xl:w-96 shrink-0">
           <CartPanel />
         </div>
@@ -164,15 +159,15 @@ function MenuPanel({
         <div className="flex items-center justify-between mb-3">
           <div>
             <h1 className="text-lg font-black text-gray-900 leading-tight">
-              {bizName ?? "Vynn POS"}
+              {bizName ?? "Sth1r POS"}
             </h1>
             <p className="text-xs text-gray-400 font-medium">
-              {mobileCompact ? "Tap item to add" : "Point of Sale"}
+              {mobileCompact ? "Tap to add · Hold to customise" : "Point of Sale"}
             </p>
           </div>
           <div className="w-10 h-10 rounded-2xl bg-primary-500 flex items-center justify-center shadow-md lg:hidden">
             <span className="text-white font-black text-lg">
-              {(bizName ?? "V").charAt(0).toUpperCase()}
+              {(bizName ?? "S").charAt(0).toUpperCase()}
             </span>
           </div>
         </div>
@@ -219,7 +214,7 @@ function MenuPanel({
         </div>
       </div>
 
-      {/* Item grid — scrollable */}
+      {/* Item grid */}
       <div className="flex-1 overflow-y-auto px-3 py-3">
         {items.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-48 text-gray-300">
@@ -252,7 +247,6 @@ function MenuPanel({
             ))}
           </div>
         )}
-        {/* Bottom clearance so the floating cart button doesn't overlap items */}
         <div className="h-24 lg:h-4" />
       </div>
     </div>
