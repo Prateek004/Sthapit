@@ -4,7 +4,6 @@ import {
   dbUpdateSyncStatus,
   dbGetAllMenuItems,
   dbGetAllCategories,
-  dbGetAllFinishedGoods,
 } from "@/lib/db";
 import type { Order } from "@/lib/types";
 
@@ -79,47 +78,15 @@ export async function syncMenuToSupabase(userId: string): Promise<void> {
           name: i.name,
           price_paise: i.pricePaise,
           is_available: i.isAvailable,
-          has_variants: !!(i.portionEnabled && i.portions?.length),
-          variants: i.portions ?? [],
-          addons: i.addOns ?? [],
-          tags: i.isVeg ? ["veg"] : ["non-veg"],
+          portions: i.portions ?? [],
+          add_ons: i.addOns ?? [],
+          is_veg: i.isVeg,
         })),
         { onConflict: "id" }
       );
     }
   } catch {
-    /* silent */
-  }
-}
-
-export async function syncFinishedGoodsToSupabase(userId: string): Promise<void> {
-  try {
-    const sb = getSupabase();
-    if (!sb) return;
-    const {
-      data: { user },
-    } = await sb.auth.getUser();
-    if (!user) return;
-    const goods = await dbGetAllFinishedGoods(userId);
-    if (goods.length === 0) return;
-    await sb.from("finished_goods").upsert(
-      goods.map((g) => ({
-        id: g.id,
-        user_id: user.id,
-        name: g.name,
-        quantity: g.quantity,
-        unit: g.unit,
-        cost_price_paise: g.costPricePaise ?? null,
-        selling_price_paise: g.sellingPricePaise ?? null,
-        expiry_date: g.expiryDate ?? null,
-        is_in_billing: g.isInBilling ?? false,
-        billing_menu_item_id: g.billingMenuItemId ?? null,
-        updated_at: g.updatedAt,
-      })),
-      { onConflict: "id" }
-    );
-  } catch {
-    /* silent — table may not exist yet */
+    /* silent — sync failure never blocks the UI */
   }
 }
 
@@ -129,7 +96,6 @@ export async function backgroundSync(userId: string): Promise<void> {
     const pending = await dbGetPendingOrders(userId);
     for (const order of pending) await syncOrder(order);
     await syncMenuToSupabase(userId);
-    await syncFinishedGoodsToSupabase(userId);
   } catch {
     /* silent */
   }
