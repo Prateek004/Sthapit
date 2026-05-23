@@ -9,30 +9,68 @@ export default function GlobalError({
   reset: () => void;
 }) {
   useEffect(() => {
-    console.error("[Vynn] Global error:", error);
+    console.error("[Sth1r] Global error:", error);
   }, [error]);
 
   return (
     <html>
       <body
         style={{
-          fontFamily: "sans-serif",
+          fontFamily: "'DM Sans', sans-serif",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
           minHeight: "100vh",
-          background: "#f9fafb",
+          background: "#FEF9F4",
           padding: "20px",
           margin: 0,
         }}
       >
         <div style={{ textAlign: "center", maxWidth: 320 }}>
-          <div style={{ fontSize: 40, marginBottom: 16 }}>⚠️</div>
-          <h2 style={{ fontWeight: 800, marginBottom: 8, color: "#111827" }}>
+          <div
+            style={{
+              width: 56,
+              height: 56,
+              borderRadius: 14,
+              background: "#E8590C",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              margin: "0 auto 16px",
+            }}
+          >
+            <span
+              style={{
+                fontFamily: "'Syne', sans-serif",
+                fontWeight: 800,
+                fontSize: 20,
+                color: "white",
+                letterSpacing: "-0.03em",
+              }}
+            >
+              S1
+            </span>
+          </div>
+          <h2
+            style={{
+              fontWeight: 800,
+              marginBottom: 8,
+              color: "#1A1208",
+              fontFamily: "'Syne', sans-serif",
+              fontSize: 18,
+            }}
+          >
             App crashed
           </h2>
-          <p style={{ color: "#6b7280", fontSize: 14, marginBottom: 24 }}>
+          <p
+            style={{
+              color: "#7A6456",
+              fontSize: 13,
+              marginBottom: 24,
+              lineHeight: 1.6,
+            }}
+          >
             {error.message || "Something went wrong. Your data is safe."}
           </p>
           <button
@@ -41,11 +79,12 @@ export default function GlobalError({
               background: "#E8590C",
               color: "white",
               border: "none",
-              borderRadius: 12,
-              padding: "12px 24px",
+              borderRadius: 50,
+              padding: "12px 28px",
               fontWeight: 700,
               cursor: "pointer",
               fontSize: 14,
+              fontFamily: "'DM Sans', sans-serif",
             }}
           >
             Reload App
