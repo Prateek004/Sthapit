@@ -75,11 +75,21 @@ function saveLocalUsers(users: LocalUser[]): void {
   } catch {}
 }
 
+function isRateLimitError(msg: string): boolean {
+  const lower = msg.toLowerCase();
+  return (
+    lower.includes("rate limit") ||
+    lower.includes("too many") ||
+    lower.includes("security purposes") ||
+    lower.includes("exceeded")
+  );
+}
+
 async function localSignUp(data: SignUpData): Promise<AuthResult> {
   const users = getLocalUsers();
   const username = data.username.toLowerCase().trim();
   if (users.some((u) => u.username === username)) {
-    return { ok: true };
+    return { ok: true }; // already exists locally — fine
   }
   const salt = generateSalt();
   const passwordHash = await hashPassword(data.password, salt);
@@ -97,20 +107,15 @@ async function localSignUp(data: SignUpData): Promise<AuthResult> {
   return { ok: true };
 }
 
-function isRateLimitError(msg: string): boolean {
-  const lower = msg.toLowerCase();
-  return (
-    lower.includes("rate limit") ||
-    lower.includes("too many") ||
-    lower.includes("security purposes") ||
-    lower.includes("exceeded")
-  );
-}
-
 export async function signUp(data: SignUpData): Promise<AuthResult> {
   const sb = getSupabase();
 
+  // No Supabase configured — local only
   if (!sb) {
+    const users = getLocalUsers();
+    if (users.some((u) => u.username === data.username.toLowerCase().trim())) {
+      return { ok: false, error: "Username already taken" };
+    }
     return localSignUp(data);
   }
 
@@ -132,18 +137,27 @@ export async function signUp(data: SignUpData): Promise<AuthResult> {
       },
     });
 
-    if (error && isRateLimitError(error.message)) {
-      return { ok: false, error: error.message };
+    if (error) {
+      if (isRateLimitError(error.message)) {
+        return { ok: false, error: error.message };
+      }
+      // Any other Supabase error (e.g. user already exists in Supabase)
+      // still save locally so they can use the app
+      console.warn("[Sth1r] Supabase signUp error, saving locally:", error.message);
     }
 
-    // Always save locally regardless of Supabase result
+    // Always write locally — covers: email confirm OFF, confirm ON, network
+    // errors, and existing Supabase users signing up on a new device
     await localSignUp(data);
     return { ok: true };
   } catch {
-    return localSignUp(data);
+    // Network down — save locally and continue
+    await localSignUp(data);
+    return { ok: true };
   }
 }
 
+// Named type so the return type never gets mangled during copy-paste
 type SignInResult = AuthResult & {
   userId?: string;
   role?: UserRole;
@@ -161,6 +175,7 @@ export async function signIn(
   const sb = getSupabase();
   const normalizedUsername = username.toLowerCase().trim();
 
+  // Local is always tried first — works offline and is instant
   const localResult = await localSignIn(normalizedUsername, password);
 
   if (!sb) return localResult;
@@ -173,6 +188,7 @@ export async function signIn(
     });
 
     if (error) {
+      // Any Supabase failure — use local if it worked
       if (localResult.ok) return localResult;
       if (isRateLimitError(error.message)) {
         return { ok: false, error: error.message };
@@ -181,15 +197,21 @@ export async function signIn(
     }
 
     const user = signInData.user;
-    if (!user) return localResult.ok ? localResult : { ok: false, error: "No session returned" };
+    if (!user) {
+      return localResult.ok ? localResult : { ok: false, error: "No session returned" };
+    }
 
+    // Fetch profile for authoritative role/businessName from cloud
     const { data: profile } = await sb
       .from("profiles")
       .select("role, business_name, business_type, gst_percent, upi_id, owner_name")
       .eq("id", user.id)
       .single();
 
-    if (!profile) return localResult.ok ? localResult : { ok: false, error: "Profile not found" };
+    if (!profile) {
+      // Profile row missing (DB trigger may not have run yet) — use local
+      return localResult.ok ? localResult : { ok: false, error: "Profile not found" };
+    }
 
     return {
       ok: true,
@@ -220,6 +242,7 @@ async function localSignIn(
   if (user.salt) {
     match = (await hashPassword(password, user.salt)) === user.passwordHash;
   } else {
+    // Upgrade legacy hash on first successful login
     if (legacyHash(password) === user.passwordHash) {
       match = true;
       const salt = generateSalt();
@@ -230,6 +253,7 @@ async function localSignIn(
   }
 
   if (!match) return { ok: false, error: "Incorrect password" };
+
   return {
     ok: true,
     userId: `local_${user.username}`,
@@ -253,7 +277,9 @@ export async function getCurrentUserId(): Promise<string | null> {
   const sb = getSupabase();
   if (!sb) {
     const raw =
-      typeof window !== "undefined" ? localStorage.getItem("sth1r_session") : null;
+      typeof window !== "undefined"
+        ? localStorage.getItem("sth1r_session")
+        : null;
     if (!raw) return null;
     try {
       return JSON.parse(raw).userId ?? null;
