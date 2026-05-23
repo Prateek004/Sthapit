@@ -19,7 +19,6 @@ const BIZ_TYPES = [
   { value: "franchise",  label: "Franchise 🏬"  },
 ].filter((b) => !(HIDE_FRANCHISE && b.value === "franchise"));
 
-// Sth1r design tokens
 const FIRE   = "#E8590C";
 const FIRE6  = "#B83E06";
 const FIRE50 = "#FEF0E8";
@@ -30,9 +29,22 @@ const SAND   = "#FDF6EE";
 const EMBER  = "#F0E8DF";
 const WHITE  = "#FFFFFF";
 
+// Returns seconds if Supabase gives us a timed rate-limit, otherwise null
 function parseRateLimitSeconds(msg: string): number | null {
   const m = msg.match(/after\s+(\d+)\s+second/i);
   return m ? parseInt(m[1], 10) : null;
+}
+
+// Any Supabase message that means "slow down" — normalise them all
+function isRateLimitMessage(msg: string): boolean {
+  const lower = msg.toLowerCase();
+  return (
+    lower.includes("rate limit") ||
+    lower.includes("too many") ||
+    lower.includes("security purposes") ||
+    lower.includes("email rate limit") ||
+    lower.includes("exceeded")
+  );
 }
 
 function Field({
@@ -133,7 +145,12 @@ export default function AuthPage() {
   const handleRateLimitError = (msg: string) => {
     const secs = parseRateLimitSeconds(msg);
     if (secs) {
+      // Supabase told us exactly how long to wait
       setRateLimitSecs(secs);
+      setError("rate_limited");
+    } else if (isRateLimitMessage(msg)) {
+      // Generic rate-limit (e.g. "email rate limit exceeded") — use 60s cooldown
+      setRateLimitSecs(60);
       setError("rate_limited");
     } else {
       setError(msg);
