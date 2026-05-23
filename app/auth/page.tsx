@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { User, Lock, Eye, EyeOff, Loader2, Store, ChevronDown } from "lucide-react";
 import { signIn, signUp } from "@/lib/supabase/auth";
@@ -29,6 +29,12 @@ const ASH    = "#7A6456";
 const SAND   = "#FDF6EE";
 const EMBER  = "#F0E8DF";
 const WHITE  = "#FFFFFF";
+
+// ── Parse Supabase rate-limit message → seconds remaining ────────────────────
+function parseRateLimitSeconds(msg: string): number | null {
+  const m = msg.match(/after\s+(\d+)\s+second/i);
+  return m ? parseInt(m[1], 10) : null;
+}
 
 function Field({
   icon, placeholder, value, onChange, type = "text", right, onKeyDown,
@@ -108,8 +114,34 @@ export default function AuthPage() {
   const [bizType, setBizType]           = useState("restaurant");
   const [loading, setLoading]           = useState(false);
   const [error, setError]               = useState("");
+  const [rateLimitSecs, setRateLimitSecs] = useState<number>(0);
+  const rateLimitTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Countdown ticker for rate-limit
+  useEffect(() => {
+    if (rateLimitSecs <= 0) {
+      if (rateLimitTimer.current) {
+        clearInterval(rateLimitTimer.current);
+        rateLimitTimer.current = null;
+      }
+      return;
+    }
+    rateLimitTimer.current = setInterval(() => {
+      setRateLimitSecs((s) => {
+        if (s <= 1) {
+          setError("");
+          return 0;
+        }
+        return s - 1;
+      });
+    }, 1000);
+    return () => {
+      if (rateLimitTimer.current) clearInterval(rateLimitTimer.current);
+    };
+  }, [rateLimitSecs]);
 
   const handleSubmit = async () => {
+    if (rateLimitSecs > 0) return; // blocked during cooldown
     setError("");
     if (!username.trim() || password.length < 6) {
       setError("Username required · password ≥ 6 characters");
@@ -123,15 +155,40 @@ export default function AuthPage() {
 
     if (mode === "signup") {
       const result = await signUp({ username, password, role, businessName, ownerName, businessType: bizType });
-      if (!result.ok) { setError(result.error ?? "Signup failed"); setLoading(false); return; }
+      if (!result.ok) {
+        const secs = parseRateLimitSeconds(result.error ?? "");
+        if (secs) {
+          setRateLimitSecs(secs);
+          setError(`Please wait ${secs}s before trying again.`);
+        } else {
+          setError(result.error ?? "Signup failed");
+        }
+        setLoading(false);
+        return;
+      }
       const loginResult = await signIn(username, password);
-      if (!loginResult.ok) { setError("Account created! Please sign in."); setLoading(false); setMode("signin"); return; }
+      if (!loginResult.ok) {
+        setError("Account created! Please sign in.");
+        setLoading(false);
+        setMode("signin");
+        return;
+      }
       const uid = loginResult.userId ?? `local_${username}`;
       await login({ userId: uid, username, role, businessName, businessType: bizType as BusinessType, gstPercent: 5 });
       await loadMenuFromTemplate(bizType, uid);
     } else {
       const result = await signIn(username, password);
-      if (!result.ok) { setError(result.error ?? "Sign in failed"); setLoading(false); return; }
+      if (!result.ok) {
+        const secs = parseRateLimitSeconds(result.error ?? "");
+        if (secs) {
+          setRateLimitSecs(secs);
+          setError(`Please wait ${secs}s before trying again.`);
+        } else {
+          setError(result.error ?? "Sign in failed");
+        }
+        setLoading(false);
+        return;
+      }
       const uid = result.userId ?? `local_${username}`;
       await login({
         userId: uid, username,
@@ -145,6 +202,9 @@ export default function AuthPage() {
     }
     router.replace("/pos");
   };
+
+  // Derived: is the button blocked by rate-limit?
+  const isRateLimited = rateLimitSecs > 0;
 
   return (
     <div style={{ minHeight: "100vh", background: COAL, display: "flex" }}>
@@ -291,7 +351,7 @@ export default function AuthPage() {
             {(["signin", "signup"] as Mode[]).map((m) => (
               <button
                 key={m}
-                onClick={() => { setMode(m); setError(""); }}
+                onClick={() => { setMode(m); setError(""); setRateLimitSecs(0); }}
                 style={{
                   flex: 1, padding: "16px 0",
                   fontSize: 12, fontWeight: 700,
@@ -421,7 +481,7 @@ export default function AuthPage() {
               )}
             </div>
 
-            {/* Error */}
+            {/* Error / rate-limit banner */}
             {error && (
               <div
                 style={{
@@ -430,33 +490,49 @@ export default function AuthPage() {
                   padding: "10px 14px", marginBottom: 16,
                   border: `1px solid rgba(184,62,6,0.15)`,
                   fontFamily: "'DM Sans', sans-serif",
+                  display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
                 }}
               >
-                {error}
+                <span>{isRateLimited ? `Too many attempts — please wait ${rateLimitSecs}s` : error}</span>
+                {isRateLimited && (
+                  <span
+                    style={{
+                      minWidth: 32, height: 32,
+                      borderRadius: "50%",
+                      border: `2px solid ${FIRE6}`,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontWeight: 700, fontSize: 12, flexShrink: 0,
+                    }}
+                  >
+                    {rateLimitSecs}
+                  </span>
+                )}
               </div>
             )}
 
             {/* Submit */}
             <button
               onClick={handleSubmit}
-              disabled={loading}
+              disabled={loading || isRateLimited}
               style={{
                 width: "100%", height: 48,
-                background: FIRE, color: "white",
+                background: isRateLimited ? ASH : FIRE, color: "white",
                 border: "none", borderRadius: 50,
                 fontSize: 14, fontWeight: 700,
                 letterSpacing: "0.04em",
-                cursor: loading ? "not-allowed" : "pointer",
-                opacity: loading ? 0.6 : 1,
+                cursor: (loading || isRateLimited) ? "not-allowed" : "pointer",
+                opacity: (loading || isRateLimited) ? 0.6 : 1,
                 display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
                 fontFamily: "'DM Sans', sans-serif",
                 transition: "background 0.15s",
               }}
-              onMouseEnter={(e) => { if (!loading) (e.target as HTMLElement).style.background = FIRE6; }}
-              onMouseLeave={(e) => { (e.target as HTMLElement).style.background = FIRE; }}
+              onMouseEnter={(e) => { if (!loading && !isRateLimited) (e.target as HTMLElement).style.background = FIRE6; }}
+              onMouseLeave={(e) => { if (!isRateLimited) (e.target as HTMLElement).style.background = FIRE; }}
             >
               {loading && <Loader2 size={15} className="spin" />}
-              {mode === "signin" ? "Sign In →" : "Create Account →"}
+              {isRateLimited
+                ? `Wait ${rateLimitSecs}s…`
+                : mode === "signin" ? "Sign In →" : "Create Account →"}
             </button>
 
             <p
@@ -467,7 +543,7 @@ export default function AuthPage() {
             >
               {mode === "signin" ? "New to Sth1r? " : "Already have an account? "}
               <button
-                onClick={() => { setMode(mode === "signin" ? "signup" : "signin"); setError(""); }}
+                onClick={() => { setMode(mode === "signin" ? "signup" : "signin"); setError(""); setRateLimitSecs(0); }}
                 style={{
                   background: "none", border: "none", cursor: "pointer",
                   color: FIRE6, fontSize: 12, fontFamily: "'DM Sans', sans-serif", fontWeight: 600,
