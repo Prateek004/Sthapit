@@ -36,6 +36,8 @@ const PAY_METHODS = [
 
 type PostTab = "invoice" | "whatsapp" | "kot";
 
+type PlacedOrder = Awaited<ReturnType<ReturnType<typeof useApp>["placeOrder"]>>;
+
 export default function CheckoutModal({
   open,
   onClose,
@@ -48,7 +50,7 @@ export default function CheckoutModal({
   discountValue,
 }: Props) {
   const { state, placeOrder, showToast } = useApp();
-  const { session, cart } = state;
+  const { session } = state;
 
   const kotEnabled = session?.stockSettings?.kotEnabled ?? false;
   const hasUpi = Boolean(session?.upiId);
@@ -59,9 +61,7 @@ export default function CheckoutModal({
   const [splitUpi, setSplitUpi] = useState("");
   const [upiConfirmed, setUpiConfirmed] = useState(false);
   const [placing, setPlacing] = useState(false);
-  const [order, setOrder] = useState<Awaited
-    ReturnType<typeof placeOrder>
-  > | null>(null);
+  const [order, setOrder] = useState<PlacedOrder | null>(null);
   const [postTab, setPostTab] = useState<PostTab>("invoice");
   const [qrSrc, setQrSrc] = useState("");
   const [qrLoading, setQrLoading] = useState(false);
@@ -135,15 +135,9 @@ export default function CheckoutModal({
       if (method === "cash" && cashInput === "")
         showToast("Enter cash received amount", "error");
       else if (method === "cash" && cashPaise < totalPaise)
-        showToast(
-          `Cash short by ${fmtRupee(totalPaise - cashPaise)}`,
-          "error"
-        );
+        showToast(`Cash short by ${fmtRupee(totalPaise - cashPaise)}`, "error");
       else if (method === "split" && !splitOk)
-        showToast(
-          `Split short by ${fmtRupee(splitShort)}`,
-          "error"
-        );
+        showToast(`Split short by ${fmtRupee(splitShort)}`, "error");
       else if (method === "upi" && !upiConfirmed)
         showToast("Confirm UPI payment received first", "error");
       return;
@@ -164,7 +158,7 @@ export default function CheckoutModal({
       setOrder(placed);
       setPostTab("invoice");
       setShowUpiQr(false);
-    } catch (err) {
+    } catch {
       showToast("Order failed. Try again.", "error");
       setPlacing(false);
     }
