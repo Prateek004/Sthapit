@@ -30,7 +30,6 @@ const SAND   = "#FDF6EE";
 const EMBER  = "#F0E8DF";
 const WHITE  = "#FFFFFF";
 
-// ── Parse Supabase rate-limit message → seconds remaining ────────────────────
 function parseRateLimitSeconds(msg: string): number | null {
   const m = msg.match(/after\s+(\d+)\s+second/i);
   return m ? parseInt(m[1], 10) : null;
@@ -104,44 +103,45 @@ function Field({
 export default function AuthPage() {
   const router = useRouter();
   const { login, loadMenuFromTemplate } = useApp();
-  const [mode, setMode]                 = useState<Mode>("signin");
-  const [username, setUsername]         = useState("");
-  const [password, setPassword]         = useState("");
-  const [showPwd, setShowPwd]           = useState(false);
-  const [role, setRole]                 = useState<UserRole>("owner");
-  const [businessName, setBusinessName] = useState("");
-  const [ownerName, setOwnerName]       = useState("");
-  const [bizType, setBizType]           = useState("restaurant");
-  const [loading, setLoading]           = useState(false);
-  const [error, setError]               = useState("");
-  const [rateLimitSecs, setRateLimitSecs] = useState<number>(0);
-  const rateLimitTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [mode, setMode]                   = useState<Mode>("signin");
+  const [username, setUsername]           = useState("");
+  const [password, setPassword]           = useState("");
+  const [showPwd, setShowPwd]             = useState(false);
+  const [role, setRole]                   = useState<UserRole>("owner");
+  const [businessName, setBusinessName]   = useState("");
+  const [ownerName, setOwnerName]         = useState("");
+  const [bizType, setBizType]             = useState("restaurant");
+  const [loading, setLoading]             = useState(false);
+  const [error, setError]                 = useState("");
+  const [rateLimitSecs, setRateLimitSecs] = useState(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Countdown ticker for rate-limit
   useEffect(() => {
     if (rateLimitSecs <= 0) {
-      if (rateLimitTimer.current) {
-        clearInterval(rateLimitTimer.current);
-        rateLimitTimer.current = null;
-      }
+      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
       return;
     }
-    rateLimitTimer.current = setInterval(() => {
+    timerRef.current = setInterval(() => {
       setRateLimitSecs((s) => {
-        if (s <= 1) {
-          setError("");
-          return 0;
-        }
+        if (s <= 1) { setError(""); return 0; }
         return s - 1;
       });
     }, 1000);
-    return () => {
-      if (rateLimitTimer.current) clearInterval(rateLimitTimer.current);
-    };
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [rateLimitSecs]);
 
+  const handleRateLimitError = (msg: string) => {
+    const secs = parseRateLimitSeconds(msg);
+    if (secs) {
+      setRateLimitSecs(secs);
+      setError("rate_limited");
+    } else {
+      setError(msg);
+    }
+  };
+
   const handleSubmit = async () => {
-    if (rateLimitSecs > 0) return; // blocked during cooldown
+    if (rateLimitSecs > 0) return;
     setError("");
     if (!username.trim() || password.length < 6) {
       setError("Username required · password ≥ 6 characters");
@@ -155,40 +155,15 @@ export default function AuthPage() {
 
     if (mode === "signup") {
       const result = await signUp({ username, password, role, businessName, ownerName, businessType: bizType });
-      if (!result.ok) {
-        const secs = parseRateLimitSeconds(result.error ?? "");
-        if (secs) {
-          setRateLimitSecs(secs);
-          setError(`Please wait ${secs}s before trying again.`);
-        } else {
-          setError(result.error ?? "Signup failed");
-        }
-        setLoading(false);
-        return;
-      }
+      if (!result.ok) { handleRateLimitError(result.error ?? "Signup failed"); setLoading(false); return; }
       const loginResult = await signIn(username, password);
-      if (!loginResult.ok) {
-        setError("Account created! Please sign in.");
-        setLoading(false);
-        setMode("signin");
-        return;
-      }
+      if (!loginResult.ok) { setError("Account created! Please sign in."); setLoading(false); setMode("signin"); return; }
       const uid = loginResult.userId ?? `local_${username}`;
       await login({ userId: uid, username, role, businessName, businessType: bizType as BusinessType, gstPercent: 5 });
       await loadMenuFromTemplate(bizType, uid);
     } else {
       const result = await signIn(username, password);
-      if (!result.ok) {
-        const secs = parseRateLimitSeconds(result.error ?? "");
-        if (secs) {
-          setRateLimitSecs(secs);
-          setError(`Please wait ${secs}s before trying again.`);
-        } else {
-          setError(result.error ?? "Sign in failed");
-        }
-        setLoading(false);
-        return;
-      }
+      if (!result.ok) { handleRateLimitError(result.error ?? "Sign in failed"); setLoading(false); return; }
       const uid = result.userId ?? `local_${username}`;
       await login({
         userId: uid, username,
@@ -203,7 +178,6 @@ export default function AuthPage() {
     router.replace("/pos");
   };
 
-  // Derived: is the button blocked by rate-limit?
   const isRateLimited = rateLimitSecs > 0;
 
   return (
@@ -223,7 +197,6 @@ export default function AuthPage() {
         }}
       >
         <div>
-          {/* S1 logomark */}
           <div
             style={{
               width: 48, height: 48,
@@ -493,7 +466,9 @@ export default function AuthPage() {
                   display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
                 }}
               >
-                <span>{isRateLimited ? `Too many attempts — please wait ${rateLimitSecs}s` : error}</span>
+                <span>
+                  {isRateLimited ? "Too many attempts — please wait:" : error}
+                </span>
                 {isRateLimited && (
                   <span
                     style={{
@@ -504,7 +479,7 @@ export default function AuthPage() {
                       fontWeight: 700, fontSize: 12, flexShrink: 0,
                     }}
                   >
-                    {rateLimitSecs}
+                    {rateLimitSecs}s
                   </span>
                 )}
               </div>
