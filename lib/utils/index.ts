@@ -10,12 +10,6 @@ export const fmtRupee = (paise: number): string =>
     maximumFractionDigits: 2,
   });
 
-/**
- * Calculate discount in paise.
- * - "flat"   : value is in RUPEES (user types ₹50 → value=50 → 5000 paise)
- * - "percent": value is 0-100 (user types 10 → 10% of subtotal)
- * Result is clamped to [0, subtotalPaise].
- */
 export const calcDiscount = (
   subtotalPaise: number,
   type: "flat" | "percent",
@@ -26,27 +20,48 @@ export const calcDiscount = (
     const pct = Math.min(Math.max(value, 0), 100);
     return Math.round((subtotalPaise * pct) / 100);
   }
-  // flat — value is in rupees
   return Math.min(toP(value), subtotalPaise);
 };
 
-/**
- * GST on the post-discount taxable amount.
- * GST = (taxableAmount × gstPercent) / 100, rounded to nearest paise.
- */
 export const calcGST = (afterDiscountPaise: number, pct: number): number => {
   if (!pct || pct <= 0) return 0;
   return Math.round((afterDiscountPaise * pct) / 100);
 };
 
-// Unique bill numbers — date prefix + 6-char random suffix
+// Sequential bill number — GST-compliant, resets each financial year
+// Format: STH-FY26-000001  (FY = financial year ending, e.g. FY26 = Apr 2025–Mar 2026)
+const BILL_COUNTER_KEY = "sth1r_bill_counter";
+const BILL_FY_KEY = "sth1r_bill_fy";
+
+function getCurrentFY(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth() + 1; // 1-indexed
+  // Indian FY: Apr–Mar. If month >= 4, FY ends next year; else this year.
+  const fyEnd = month >= 4 ? year + 1 : year;
+  return String(fyEnd).slice(2); // "26" for FY2025-26
+}
+
 export const generateBillNumber = (): string => {
-  const d = new Date();
-  const yy = String(d.getFullYear()).slice(2);
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  const rand = crypto.randomUUID().replace(/-/g, "").slice(0, 6).toUpperCase();
-  return `SV${yy}${mm}${dd}-${rand}`;
+  try {
+    const fy = getCurrentFY();
+    const storedFY = localStorage.getItem(BILL_FY_KEY) ?? "";
+    let counter = parseInt(localStorage.getItem(BILL_COUNTER_KEY) ?? "0", 10);
+
+    if (storedFY !== fy) {
+      // New financial year — reset counter
+      counter = 0;
+      localStorage.setItem(BILL_FY_KEY, fy);
+    }
+
+    counter += 1;
+    localStorage.setItem(BILL_COUNTER_KEY, String(counter));
+    return `STH-FY${fy}-${String(counter).padStart(6, "0")}`;
+  } catch {
+    // Fallback if localStorage is unavailable (SSR, private mode)
+    const rand = crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase();
+    return `STH-${rand}`;
+  }
 };
 
 export const fmtTime = (iso: string): string =>
