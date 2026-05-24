@@ -25,7 +25,6 @@ function getTableDurMin(openedAt: string): number {
 
 function getTableStatus(tab: OpenTable): "occ" | "warn" | "billreq" {
   const dur = getTableDurMin(tab.openedAt);
-  // "bill req" flag stored on the tab — fall back to duration heuristic
   if (dur >= 45) return "warn";
   return "occ";
 }
@@ -102,7 +101,6 @@ function TableMapPanel({
             const n = idx + 1;
             const tab = occupiedMap.get(n);
             if (!tab) {
-              // Empty
               return (
                 <div
                   key={n}
@@ -991,7 +989,6 @@ export default function OrdersPage() {
   const [allOrders, setAllOrders]     = useState<Order[]>([]);
   const [filter, setFilter]           = useState<"today" | "all">("today");
   const [tab, setTab]                 = useState<"orders" | "tables">("orders");
-  // "map" = table map view, "list" = existing card list
   const [tableView, setTableView]     = useState<"map" | "list">("map");
   const [syncing, setSyncing]         = useState(false);
   const [expanded, setExpanded]       = useState<string | null>(null);
@@ -1003,6 +1000,7 @@ export default function OrdersPage() {
   const openTableEnabled = state.session?.stockSettings?.openTableBilling ?? false;
   const kotEnabled       = state.session?.stockSettings?.kotEnabled ?? false;
   const tableCount       = state.session?.stockSettings?.tableCount ?? 0;
+  const supabaseOn       = isSupabaseEnabled();
 
   useEffect(() => {
     import("@/lib/db").then(({ dbGetAllOrders }) =>
@@ -1039,7 +1037,6 @@ export default function OrdersPage() {
     setBilledOrder(order);
   };
 
-  // When user taps a table card in the map, open the close/bill modal
   const handleMapTableSelect = (openTab: OpenTable) => {
     setClosingTab(openTab);
   };
@@ -1048,11 +1045,11 @@ export default function OrdersPage() {
     <AppShell>
       <div className="min-h-screen bg-gray-50">
 
-        {/* ── Header ─────────────────────────────────────────────────────── */}
+        {/* ── Header ── */}
         <div className="bg-white px-4 lg:px-8 pt-12 lg:pt-6 pb-4 shadow-sm">
           <div className="flex items-center justify-between">
             <h1 className="text-xl font-black text-gray-900">Orders</h1>
-            {isSupabaseEnabled() && (
+            {supabaseOn && (
               <button
                 onClick={handleSync}
                 disabled={syncing}
@@ -1085,10 +1082,10 @@ export default function OrdersPage() {
           )}
         </div>
 
-        {/* ── Content ────────────────────────────────────────────────────── */}
+        {/* ── Content ── */}
         <div className="px-4 lg:px-8 py-4 space-y-4 w-full">
 
-          {/* ── Open Tables tab ─────────────────────────────────────────── */}
+          {/* ── Open Tables tab ── */}
           {openTableEnabled && tab === "tables" && (
             <>
               {state.openTables.length === 0 ? (
@@ -1101,7 +1098,7 @@ export default function OrdersPage() {
                 </div>
               ) : (
                 <>
-                  {/* View toggle: Map / List */}
+                  {/* View toggle */}
                   <div className="flex items-center justify-end gap-1.5">
                     <button
                       onClick={() => setTableView("map")}
@@ -1127,7 +1124,6 @@ export default function OrdersPage() {
                     </button>
                   </div>
 
-                  {/* ── MAP VIEW ─────────────────────────────────────────── */}
                   {tableView === "map" && (
                     <TableMapPanel
                       openTables={state.openTables}
@@ -1136,20 +1132,13 @@ export default function OrdersPage() {
                     />
                   )}
 
-                  {/* ── LIST VIEW ────────────────────────────────────────── */}
                   {tableView === "list" &&
                     state.openTables.map((openTab) => {
                       const tabTotal = openTab.items.reduce((s, i) => {
-                        const ao = i.selectedAddOns.reduce(
-                          (x, a) => x + a.pricePaise,
-                          0
-                        );
+                        const ao = i.selectedAddOns.reduce((x, a) => x + a.pricePaise, 0);
                         return s + (i.unitPricePaise + ao) * i.qty;
                       }, 0);
-                      const itemCount = openTab.items.reduce(
-                        (s, i) => s + i.qty,
-                        0
-                      );
+                      const itemCount = openTab.items.reduce((s, i) => s + i.qty, 0);
                       const dur = getTableDurMin(openTab.openedAt);
                       return (
                         <div
@@ -1230,7 +1219,7 @@ export default function OrdersPage() {
             </>
           )}
 
-          {/* ── Orders tab ──────────────────────────────────────────────── */}
+          {/* ── Orders tab ── */}
           {(!openTableEnabled || tab === "orders") && (
             <>
               <div className="grid grid-cols-2 gap-3">
@@ -1262,19 +1251,13 @@ export default function OrdersPage() {
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 px-3 py-2 bg-white rounded-xl shadow-sm text-xs font-semibold">
-                {isSupabaseEnabled() ? (
-                  <>
-                    <Cloud size={14} className="text-green-500" />
-                    <span className="text-green-600">Cloud sync enabled</span>
-                  </>
-                ) : (
-                  <>
-                    <CloudOff size={14} className="text-gray-400" />
-                    <span className="text-gray-400">Offline only</span>
-                  </>
-                )}
-              </div>
+              {/* Sync status indicator — only shown when Supabase is enabled */}
+              {supabaseOn && (
+                <div className="flex items-center gap-2 px-3 py-2 bg-white rounded-xl shadow-sm text-xs font-semibold">
+                  <Cloud size={14} className="text-green-500" />
+                  <span className="text-green-600">Cloud sync enabled</span>
+                </div>
+              )}
 
               <div className="flex rounded-2xl bg-gray-100 p-1">
                 {(["today", "all"] as const).map((f) => (
@@ -1322,17 +1305,18 @@ export default function OrdersPage() {
                                 T{order.tableNumber}
                               </span>
                             )}
-                            <span
-                              className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                                order.syncStatus === "synced"
-                                  ? "bg-green-50 text-green-600"
-                                  : order.syncStatus === "failed"
-                                  ? "bg-red-50 text-red-500"
-                                  : "bg-gray-100 text-gray-400"
-                              }`}
-                            >
-                              {order.syncStatus}
-                            </span>
+                            {/* ── Sync badge — only shown when meaningful ── */}
+                            {supabaseOn && order.syncStatus === "failed" && (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-50 text-red-500">
+                                sync failed
+                              </span>
+                            )}
+                            {supabaseOn && order.syncStatus === "pending" && (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-600">
+                                syncing…
+                              </span>
+                            )}
+                            {/* synced = no badge, offline = no badge */}
                           </div>
                           <p className="text-xs text-gray-400 mt-0.5">
                             {fmtTime(order.createdAt)} &middot;{" "}
