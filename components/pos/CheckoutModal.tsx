@@ -4,6 +4,7 @@ import Modal from "@/components/ui/Modal";
 import { useApp } from "@/lib/store/AppContext";
 import type { PaymentMethod } from "@/lib/types";
 import { fmtRupee, fmtDate, toP, QUICK_CASH } from "@/lib/utils";
+import { printKot } from "@/components/pos/CartPanel";
 import {
   CheckCircle2,
   Banknote,
@@ -34,7 +35,7 @@ const PAY_METHODS = [
   { id: "split" as PaymentMethod, label: "Split", Icon: Banknote },
 ];
 
-type PostTab = "invoice" | "whatsapp" | "kot";
+type PostTab = "kot" | "invoice" | "whatsapp";
 
 type PlacedOrder = Awaited<ReturnType<ReturnType<typeof useApp>["placeOrder"]>>;
 
@@ -50,7 +51,7 @@ export default function CheckoutModal({
   discountValue,
 }: Props) {
   const { state, placeOrder, showToast } = useApp();
-  const { session } = state;
+  const { session, cart, serviceMode, tableNumber } = state;
 
   const kotEnabled = session?.stockSettings?.kotEnabled ?? false;
   const hasUpi = Boolean(session?.upiId);
@@ -66,9 +67,10 @@ export default function CheckoutModal({
   const [qrSrc, setQrSrc] = useState("");
   const [qrLoading, setQrLoading] = useState(false);
   const [showUpiQr, setShowUpiQr] = useState(false);
+  // Track whether KOT was already fired before payment
+  const [kotFired, setKotFired] = useState(false);
   const invoiceRef = useRef<HTMLDivElement>(null);
 
-  // Reset state on open
   useEffect(() => {
     if (open) {
       setMethod("cash");
@@ -80,8 +82,11 @@ export default function CheckoutModal({
       setOrder(null);
       setQrSrc("");
       setShowUpiQr(false);
+      setKotFired(false);
+      // Default to KOT tab if kot is enabled, else invoice
+      setPostTab(kotEnabled ? "kot" : "invoice");
     }
-  }, [open]);
+  }, [open, kotEnabled]);
 
   // Generate UPI QR
   useEffect(() => {
@@ -112,7 +117,6 @@ export default function CheckoutModal({
     };
   }, [showUpiQr, hasUpi, totalPaise, session]);
 
-  // ── Derived payment values ──────────────────────────────────────────────
   const cashPaise = toP(Number(cashInput) || 0);
   const changePaise = Math.max(0, cashPaise - totalPaise);
 
@@ -127,6 +131,20 @@ export default function CheckoutModal({
     ((method === "upi" && upiConfirmed) ||
       (method === "cash" && cashInput !== "" && cashPaise >= totalPaise) ||
       (method === "split" && splitOk));
+
+  // ── Fire KOT before payment ───────────────────────────────────────────────
+  const handleFireKot = () => {
+    const kotRef = `KOT${tableNumber ? `-T${tableNumber}` : ""}-${Date.now().toString().slice(-6)}`;
+    printKot({
+      billNumber: kotRef,
+      tableNumber,
+      serviceMode,
+      items: cart,
+      businessName: session?.businessName,
+    });
+    setKotFired(true);
+    showToast("KOT sent to kitchen ✓");
+  };
 
   const handleConfirm = async () => {
     if (placing) return;
@@ -156,7 +174,7 @@ export default function CheckoutModal({
             : undefined,
       });
       setOrder(placed);
-      setPostTab("invoice");
+      setPostTab(kotEnabled ? "kot" : "invoice");
       setShowUpiQr(false);
     } catch {
       showToast("Order failed. Try again.", "error");
@@ -182,37 +200,15 @@ export default function CheckoutModal({
     }, 400);
   };
 
-  const handlePrintKot = () => {
+  const handlePrintKotPost = () => {
     if (!order) return;
-    const tableInfo = order.tableNumber
-      ? `Table: ${order.tableNumber}`
-      : order.serviceMode.replace("_", " ").toUpperCase();
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>KOT #${order.billNumber}</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Courier New',monospace;font-size:13px;width:80mm;padding:4mm}.c{text-align:center}.b{font-weight:bold;font-size:15px}hr{border:none;border-top:2px dashed #000;margin:4px 0}.item{font-size:14px;margin:4px 0}</style></head><body>
-      <div class="c b">KITCHEN ORDER</div>
-      <hr/>
-      <div class="c">${tableInfo} · #${order.billNumber}</div>
-      <div class="c">${new Date(order.createdAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</div>
-      <hr/>
-      ${order.items
-        .map(
-          (i) =>
-            `<div class="item">${i.qty}x ${i.name}${i.selectedPortion ? ` (${i.selectedPortion})` : ""}${i.selectedAddOns.length ? ` + ${i.selectedAddOns.map((a) => a.name).join(", ")}` : ""}${i.notes ? `<br/><em style="font-size:11px">→ ${i.notes}</em>` : ""}</div>`
-        )
-        .join("")}
-      <hr/>
-    </body></html>`;
-    const w = window.open("", "_blank", "width=300,height=400");
-    if (!w) {
-      showToast("Allow popups to print KOT", "error");
-      return;
-    }
-    w.document.write(html);
-    w.document.close();
-    w.focus();
-    setTimeout(() => {
-      w.print();
-      w.close();
-    }, 300);
+    printKot({
+      billNumber: order.billNumber,
+      tableNumber: order.tableNumber,
+      serviceMode: order.serviceMode,
+      items: order.items,
+      businessName: session?.businessName,
+    });
   };
 
   const handleWhatsApp = () => {
@@ -254,6 +250,44 @@ export default function CheckoutModal({
     return (
       <Modal open={open} onClose={onClose} title="Checkout">
         <div className="px-5 pb-6 space-y-4 pt-1">
+          {/* KOT fire-before-payment — only shown when kotEnabled */}
+          {kotEnabled && cart.length > 0 && (
+            <div
+              className={`rounded-2xl p-3 flex items-center gap-3 border-2 ${
+                kotFired
+                  ? "border-green-400 bg-green-50"
+                  : "border-orange-300 bg-orange-50"
+              }`}
+            >
+              <ClipboardList
+                size={20}
+                className={kotFired ? "text-green-600" : "text-orange-500"}
+              />
+              <div className="flex-1">
+                <p
+                  className={`text-sm font-bold ${
+                    kotFired ? "text-green-700" : "text-orange-700"
+                  }`}
+                >
+                  {kotFired ? "KOT sent to kitchen ✓" : "Send to kitchen first?"}
+                </p>
+                <p className="text-xs text-gray-400">
+                  {kotFired
+                    ? "Kitchen is preparing the order"
+                    : "Fire KOT before or after payment"}
+                </p>
+              </div>
+              {!kotFired && (
+                <button
+                  onClick={handleFireKot}
+                  className="shrink-0 px-3 py-1.5 rounded-xl bg-orange-500 text-white text-xs font-bold press"
+                >
+                  Fire KOT
+                </button>
+              )}
+            </div>
+          )}
+
           {/* Summary */}
           <div className="bg-gray-50 rounded-2xl p-4 space-y-1.5 text-sm">
             <div className="flex justify-between text-gray-500">
@@ -513,11 +547,11 @@ export default function CheckoutModal({
 
   // ── Post-checkout screen ──────────────────────────────────────────────────
   const postTabs: { id: PostTab; label: string; Icon: React.ElementType }[] = [
-    { id: "invoice", label: "Invoice", Icon: Printer },
-    { id: "whatsapp", label: "WhatsApp", Icon: MessageCircle },
     ...(kotEnabled
       ? [{ id: "kot" as PostTab, label: "KOT", Icon: ClipboardList }]
       : []),
+    { id: "invoice", label: "Invoice", Icon: Printer },
+    { id: "whatsapp", label: "WhatsApp", Icon: MessageCircle },
   ];
 
   return (
@@ -564,112 +598,7 @@ export default function CheckoutModal({
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-4">
-          {/* Invoice */}
-          {postTab === "invoice" && (
-            <div>
-              <div
-                ref={invoiceRef}
-                className="font-mono text-xs leading-relaxed bg-white border border-dashed border-gray-300 rounded-xl p-4 mx-auto"
-                style={{ maxWidth: "320px" }}
-              >
-                <div className="c b text-sm mb-1">
-                  {session?.businessName ?? "Sth1r"}
-                </div>
-                <div className="border-t border-dashed border-gray-300 my-2" />
-                <div className="row">
-                  <span>Bill #: {order.billNumber}</span>
-                  <span>{fmtDate(order.createdAt)}</span>
-                </div>
-                {order.tableNumber && (
-                  <div className="text-center text-xs mt-1">
-                    Table: {order.tableNumber}
-                  </div>
-                )}
-                <div className="border-t border-dashed border-gray-300 my-2" />
-                {order.items.map((item, i) => {
-                  const ao = item.selectedAddOns.reduce(
-                    (s, a) => s + a.pricePaise,
-                    0
-                  );
-                  const line = (item.unitPricePaise + ao) * item.qty;
-                  return (
-                    <div key={i} className="mb-1">
-                      <div className="row">
-                        <span className="flex-1 truncate pr-2">{item.name}</span>
-                        <span>{fmtRupee(line)}</span>
-                      </div>
-                      <div className="text-gray-400 pl-2">
-                        {item.qty} × {fmtRupee(item.unitPricePaise + ao)}
-                      </div>
-                    </div>
-                  );
-                })}
-                <div className="border-t border-dashed border-gray-300 my-2" />
-                <div className="row text-gray-500">
-                  <span>Subtotal</span>
-                  <span>{fmtRupee(order.subtotalPaise)}</span>
-                </div>
-                {order.discountPaise > 0 && (
-                  <div className="row text-gray-500">
-                    <span>Discount</span>
-                    <span>-{fmtRupee(order.discountPaise)}</span>
-                  </div>
-                )}
-                {order.gstPercent > 0 && (
-                  <div className="row text-gray-500">
-                    <span>GST ({order.gstPercent}%)</span>
-                    <span>{fmtRupee(order.gstPaise)}</span>
-                  </div>
-                )}
-                <div className="border-t border-dashed border-gray-300 my-2" />
-                <div className="row b text-sm">
-                  <span>TOTAL</span>
-                  <span>{fmtRupee(order.totalPaise)}</span>
-                </div>
-                <div className="row text-gray-500 mt-1">
-                  <span>Payment</span>
-                  <span>{order.paymentMethod.toUpperCase()}</span>
-                </div>
-                {order.changePaise != null && order.changePaise > 0 && (
-                  <div className="row text-gray-500">
-                    <span>Change</span>
-                    <span>{fmtRupee(order.changePaise)}</span>
-                  </div>
-                )}
-                <div className="border-t border-dashed border-gray-300 my-3" />
-                <div className="c text-gray-400">Thank you! Visit again 🙏</div>
-              </div>
-              <button
-                onClick={handlePrint}
-                className="mt-4 w-full h-11 flex items-center justify-center gap-2 bg-gray-900 text-white rounded-2xl font-bold text-sm press"
-              >
-                <Printer size={16} />
-                Print Invoice
-              </button>
-            </div>
-          )}
-
-          {/* WhatsApp */}
-          {postTab === "whatsapp" && (
-            <div className="flex flex-col items-center text-center py-4">
-              <div className="w-16 h-16 rounded-3xl bg-green-500 flex items-center justify-center mb-4">
-                <MessageCircle size={32} className="text-white" />
-              </div>
-              <h3 className="font-black text-gray-900 text-lg mb-1">
-                Send Receipt
-              </h3>
-              <p className="text-sm text-gray-400 mb-6">Share via WhatsApp</p>
-              <button
-                onClick={handleWhatsApp}
-                className="w-full h-12 flex items-center justify-center gap-2 bg-green-500 text-white rounded-2xl font-bold press shadow-md"
-              >
-                <MessageCircle size={18} />
-                Open in WhatsApp
-              </button>
-            </div>
-          )}
-
-          {/* KOT */}
+          {/* KOT tab */}
           {postTab === "kot" && (
             <div className="flex flex-col items-center text-center py-4">
               <div className="w-16 h-16 rounded-3xl bg-orange-500 flex items-center justify-center mb-4">
@@ -713,11 +642,116 @@ export default function CheckoutModal({
                 ))}
               </div>
               <button
-                onClick={handlePrintKot}
+                onClick={handlePrintKotPost}
                 className="w-full h-12 flex items-center justify-center gap-2 bg-orange-500 text-white rounded-2xl font-bold press shadow-md"
               >
                 <Printer size={18} />
                 Print KOT
+              </button>
+            </div>
+          )}
+
+          {/* Invoice tab */}
+          {postTab === "invoice" && (
+            <div>
+              <div
+                ref={invoiceRef}
+                className="font-mono text-xs leading-relaxed bg-white border border-dashed border-gray-300 rounded-xl p-4 mx-auto"
+                style={{ maxWidth: "320px" }}
+              >
+                <div className="c b text-sm mb-1">
+                  {session?.businessName ?? "Sth1r"}
+                </div>
+                <div className="border-t border-dashed border-gray-300 my-2" />
+                <div className="flex justify-between">
+                  <span>Bill #: {order.billNumber}</span>
+                  <span>{fmtDate(order.createdAt)}</span>
+                </div>
+                {order.tableNumber && (
+                  <div className="text-center text-xs mt-1">
+                    Table: {order.tableNumber}
+                  </div>
+                )}
+                <div className="border-t border-dashed border-gray-300 my-2" />
+                {order.items.map((item, i) => {
+                  const ao = item.selectedAddOns.reduce(
+                    (s, a) => s + a.pricePaise,
+                    0
+                  );
+                  const line = (item.unitPricePaise + ao) * item.qty;
+                  return (
+                    <div key={i} className="mb-1">
+                      <div className="flex justify-between">
+                        <span className="flex-1 truncate pr-2">{item.name}</span>
+                        <span>{fmtRupee(line)}</span>
+                      </div>
+                      <div className="text-gray-400 pl-2">
+                        {item.qty} × {fmtRupee(item.unitPricePaise + ao)}
+                      </div>
+                    </div>
+                  );
+                })}
+                <div className="border-t border-dashed border-gray-300 my-2" />
+                <div className="flex justify-between text-gray-500">
+                  <span>Subtotal</span>
+                  <span>{fmtRupee(order.subtotalPaise)}</span>
+                </div>
+                {order.discountPaise > 0 && (
+                  <div className="flex justify-between text-gray-500">
+                    <span>Discount</span>
+                    <span>-{fmtRupee(order.discountPaise)}</span>
+                  </div>
+                )}
+                {order.gstPercent > 0 && (
+                  <div className="flex justify-between text-gray-500">
+                    <span>GST ({order.gstPercent}%)</span>
+                    <span>{fmtRupee(order.gstPaise)}</span>
+                  </div>
+                )}
+                <div className="border-t border-dashed border-gray-300 my-2" />
+                <div className="flex justify-between font-bold text-sm">
+                  <span>TOTAL</span>
+                  <span>{fmtRupee(order.totalPaise)}</span>
+                </div>
+                <div className="flex justify-between text-gray-500 mt-1">
+                  <span>Payment</span>
+                  <span>{order.paymentMethod.toUpperCase()}</span>
+                </div>
+                {order.changePaise != null && order.changePaise > 0 && (
+                  <div className="flex justify-between text-gray-500">
+                    <span>Change</span>
+                    <span>{fmtRupee(order.changePaise)}</span>
+                  </div>
+                )}
+                <div className="border-t border-dashed border-gray-300 my-3" />
+                <div className="text-center text-gray-400">Thank you! Visit again 🙏</div>
+              </div>
+              <button
+                onClick={handlePrint}
+                className="mt-4 w-full h-11 flex items-center justify-center gap-2 bg-gray-900 text-white rounded-2xl font-bold text-sm press"
+              >
+                <Printer size={16} />
+                Print Invoice
+              </button>
+            </div>
+          )}
+
+          {/* WhatsApp tab */}
+          {postTab === "whatsapp" && (
+            <div className="flex flex-col items-center text-center py-4">
+              <div className="w-16 h-16 rounded-3xl bg-green-500 flex items-center justify-center mb-4">
+                <MessageCircle size={32} className="text-white" />
+              </div>
+              <h3 className="font-black text-gray-900 text-lg mb-1">
+                Send Receipt
+              </h3>
+              <p className="text-sm text-gray-400 mb-6">Share via WhatsApp</p>
+              <button
+                onClick={handleWhatsApp}
+                className="w-full h-12 flex items-center justify-center gap-2 bg-green-500 text-white rounded-2xl font-bold press shadow-md"
+              >
+                <MessageCircle size={18} />
+                Open in WhatsApp
               </button>
             </div>
           )}
