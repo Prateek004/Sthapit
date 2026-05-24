@@ -2,8 +2,6 @@ import { getSupabase, isSupabaseEnabled } from "./client";
 import {
   dbGetPendingOrders,
   dbUpdateSyncStatus,
-  dbGetAllMenuItems,
-  dbGetAllCategories,
 } from "@/lib/db";
 import type { Order } from "@/lib/types";
 
@@ -23,6 +21,7 @@ export async function syncOrder(order: Order): Promise<boolean> {
         bill_number: order.billNumber,
         items: order.items,
         service_mode: order.serviceMode,
+        table_number: order.tableNumber ?? null,
         subtotal_paise: Math.round(order.subtotalPaise),
         discount_paise: Math.round(order.discountPaise),
         discount_type: order.discountType,
