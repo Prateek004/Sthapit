@@ -13,7 +13,6 @@ import {
   LayoutGrid,
   BookmarkCheck,
   ClipboardList,
-  Printer,
 } from "lucide-react";
 import CheckoutModal from "./CheckoutModal";
 import type { ServiceMode } from "@/lib/types";
@@ -28,7 +27,8 @@ const SERVICE_MODES: {
   { mode: "delivery", label: "Delivery", Icon: Bike },
 ];
 
-// Shared KOT print helper — used here and in CheckoutModal
+// ── Shared KOT print helper ───────────────────────────────────────────────────
+// Exported so CheckoutModal can use the same logic without duplication.
 export function printKot(params: {
   billNumber: string;
   tableNumber?: number;
@@ -50,12 +50,25 @@ export function printKot(params: {
     <div class="c b">KITCHEN ORDER${businessName ? " — " + businessName : ""}</div>
     <hr/>
     <div class="c">${tableInfo} · #${billNumber}</div>
-    <div class="c">${new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</div>
+    <div class="c">${new Date().toLocaleTimeString("en-IN", {
+      hour: "2-digit",
+      minute: "2-digit",
+    })}</div>
     <hr/>
     ${items
       .map(
         (i) =>
-          `<div class="item">${i.qty}x ${i.name}${i.selectedPortion ? ` (${i.selectedPortion})` : ""}${i.selectedAddOns.length ? ` + ${i.selectedAddOns.map((a) => a.name).join(", ")}` : ""}${i.notes ? `<br/><em style="font-size:11px">-> ${i.notes}</em>` : ""}</div>`
+          `<div class="item">${i.qty}x ${i.name}${
+            i.selectedPortion ? ` (${i.selectedPortion})` : ""
+          }${
+            i.selectedAddOns.length
+              ? ` + ${i.selectedAddOns.map((a) => a.name).join(", ")}`
+              : ""
+          }${
+            i.notes
+              ? `<br/><em style="font-size:11px">-> ${i.notes}</em>`
+              : ""
+          }</div>`
       )
       .join("")}
     <hr/>
@@ -119,29 +132,32 @@ export default function CartPanel({ onClose }: Props) {
   const gstPaise = calcGST(afterDiscount, gstPercent);
   const totalPaise = afterDiscount + gstPaise;
   const itemCount = cart.reduce((s, i) => s + i.qty, 0);
-
   const discountCapped = discountPaise >= subtotalPaise && discountValue > 0;
 
-  // ── Clear with confirmation ───────────────────────────────────────────────
+  // ── Clear cart with confirmation dialog ──────────────────────────────────
   const handleClearAll = useCallback(() => {
     if (cart.length === 0) return;
-    if (!window.confirm(`Clear all ${itemCount} item${itemCount > 1 ? "s" : ""} from cart?`)) return;
+    if (
+      !window.confirm(
+        `Clear all ${itemCount} item${itemCount > 1 ? "s" : ""} from cart?`
+      )
+    )
+      return;
     clearCart();
     setDiscountInput("");
   }, [cart.length, itemCount, clearCart]);
 
-  // ── Hold to table — fires KOT immediately if kotEnabled ──────────────────
+  // ── Hold to table — fires KOT immediately if kotEnabled ─────────────────
   const handleHold = async () => {
     if (!tableNumber) {
-      showToast("Select a table first to hold", "error");
+      showToast("Select a table first", "error");
       return;
     }
     if (cart.length === 0) return;
     setHolding(true);
     try {
-      const tab = await holdToTable(tableNumber);
+      await holdToTable(tableNumber);
       if (kotEnabled) {
-        // Generate a temporary KOT reference from the held items
         const kotRef = `KOT-T${tableNumber}-${Date.now().toString().slice(-6)}`;
         printKot({
           billNumber: kotRef,
@@ -150,7 +166,7 @@ export default function CartPanel({ onClose }: Props) {
           items: cart,
           businessName: session?.businessName,
         });
-        showToast(`Table ${tableNumber} held — KOT sent to kitchen ✓`);
+        showToast(`Table ${tableNumber} held — KOT fired to kitchen ✓`);
       } else {
         showToast(`Cart held on Table ${tableNumber} ✓`);
       }
@@ -165,7 +181,7 @@ export default function CartPanel({ onClose }: Props) {
   return (
     <>
       <div className="flex flex-col h-full bg-white overflow-hidden">
-        {/* Service mode tabs */}
+        {/* ── Service mode tabs ── */}
         <div className="flex gap-1 px-3 pt-3 pb-2 shrink-0">
           {SERVICE_MODES.map(({ mode, label, Icon }) => (
             <button
@@ -183,7 +199,7 @@ export default function CartPanel({ onClose }: Props) {
           ))}
         </div>
 
-        {/* Table picker */}
+        {/* ── Table picker ── */}
         {tablesEnabled && serviceMode === "dine_in" && (
           <div className="px-3 pb-2 shrink-0">
             <button
@@ -214,7 +230,7 @@ export default function CartPanel({ onClose }: Props) {
                           setTableNumber(n === tableNumber ? undefined : n);
                           setShowTablePicker(false);
                         }}
-                        className={`h-9 rounded-xl text-sm font-bold border-2 press transition-all relative ${
+                        className={`relative h-9 rounded-xl text-sm font-bold border-2 press transition-all ${
                           tableNumber === n
                             ? "border-primary-500 bg-primary-500 text-white"
                             : isOpen
@@ -246,7 +262,7 @@ export default function CartPanel({ onClose }: Props) {
           </div>
         )}
 
-        {/* Cart header */}
+        {/* ── Cart header ── */}
         <div className="flex items-center justify-between px-4 py-2 border-b border-gray-100 shrink-0">
           <h2 className="font-bold text-gray-900 text-sm">
             Cart
@@ -264,7 +280,7 @@ export default function CartPanel({ onClose }: Props) {
           )}
         </div>
 
-        {/* Cart items */}
+        {/* ── Cart items ── */}
         <div className="flex-1 overflow-y-auto px-4 py-2 space-y-2">
           {cart.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-40 text-gray-300 select-none">
@@ -298,7 +314,8 @@ export default function CartPanel({ onClose }: Props) {
                       )}
                       {item.selectedAddOns.length > 0 && (
                         <p className="text-xs text-gray-400">
-                          + {item.selectedAddOns.map((a) => a.name).join(", ")}
+                          +{" "}
+                          {item.selectedAddOns.map((a) => a.name).join(", ")}
                         </p>
                       )}
                       {item.notes && (
@@ -346,10 +363,10 @@ export default function CartPanel({ onClose }: Props) {
           )}
         </div>
 
-        {/* Summary + actions */}
+        {/* ── Summary + actions ── */}
         {cart.length > 0 && (
           <div className="border-t border-gray-100 px-4 pt-3 pb-4 space-y-3 shrink-0 bg-white">
-            {/* Discount row */}
+            {/* Discount */}
             <div className="flex items-center gap-2">
               <Tag size={14} className="text-gray-400 shrink-0" />
               <div className="flex rounded-xl border border-gray-200 overflow-hidden shrink-0">
@@ -396,19 +413,19 @@ export default function CartPanel({ onClose }: Props) {
               </p>
             )}
 
-            {/* Totals breakdown */}
+            {/* Totals */}
             <div className="space-y-1 text-sm">
               <div className="flex justify-between text-gray-500">
                 <span>Subtotal</span>
-                <span className="font-semibold">{fmtRupee(subtotalPaise)}</span>
+                <span className="font-semibold">
+                  {fmtRupee(subtotalPaise)}
+                </span>
               </div>
               {discountPaise > 0 && (
                 <div className="flex justify-between text-green-600">
                   <span>
                     Discount
-                    {discountType === "percent"
-                      ? ` (${discountValue}%)`
-                      : ""}
+                    {discountType === "percent" ? ` (${discountValue}%)` : ""}
                   </span>
                   <span className="font-semibold">
                     −{fmtRupee(discountPaise)}
@@ -418,7 +435,9 @@ export default function CartPanel({ onClose }: Props) {
               {discountPaise > 0 && (
                 <div className="flex justify-between text-gray-400 text-xs">
                   <span>Taxable amount</span>
-                  <span className="font-semibold">{fmtRupee(afterDiscount)}</span>
+                  <span className="font-semibold">
+                    {fmtRupee(afterDiscount)}
+                  </span>
                 </div>
               )}
               {gstPercent > 0 && (
@@ -429,11 +448,13 @@ export default function CartPanel({ onClose }: Props) {
               )}
               <div className="flex justify-between text-base font-black text-gray-900 pt-1.5 border-t border-gray-100">
                 <span>Total</span>
-                <span className="text-primary-500">{fmtRupee(totalPaise)}</span>
+                <span className="text-primary-500">
+                  {fmtRupee(totalPaise)}
+                </span>
               </div>
             </div>
 
-            {/* Hold button — shows KOT icon if kotEnabled */}
+            {/* Hold button */}
             {openTableBilling && serviceMode === "dine_in" && (
               <button
                 onClick={handleHold}
@@ -451,7 +472,7 @@ export default function CartPanel({ onClose }: Props) {
                   ? kotEnabled
                     ? `Hold Table ${tableNumber} + Fire KOT`
                     : `Hold on Table ${tableNumber}`
-                  : "Select table to Hold"}
+                  : "Select a table to hold"}
               </button>
             )}
 
