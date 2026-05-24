@@ -10,6 +10,12 @@ export const fmtRupee = (paise: number): string =>
     maximumFractionDigits: 2,
   });
 
+/**
+ * Calculate discount in paise.
+ * - "flat"   : value is in RUPEES (user types ₹50 → value=50 → 5000 paise)
+ * - "percent": value is 0-100 (user types 10 → 10% of subtotal)
+ * Result is clamped to [0, subtotalPaise].
+ */
 export const calcDiscount = (
   subtotalPaise: number,
   type: "flat" | "percent",
@@ -20,16 +26,23 @@ export const calcDiscount = (
     const pct = Math.min(Math.max(value, 0), 100);
     return Math.round((subtotalPaise * pct) / 100);
   }
+  // flat — value is in rupees
   return Math.min(toP(value), subtotalPaise);
 };
 
+/**
+ * GST on the post-discount taxable amount.
+ * GST = (taxableAmount × gstPercent) / 100, rounded to nearest paise.
+ */
 export const calcGST = (afterDiscountPaise: number, pct: number): number => {
   if (!pct || pct <= 0) return 0;
   return Math.round((afterDiscountPaise * pct) / 100);
 };
 
-// Sequential bill number — GST-compliant, resets each financial year
-// Format: STH-FY26-000001  (FY = financial year ending, e.g. FY26 = Apr 2025–Mar 2026)
+// ── Sequential bill number — GST-compliant ────────────────────────────────────
+// Format: STH-FY26-000001  (FY = Indian financial year ending, Apr–Mar)
+// Resets automatically each new financial year.
+// Falls back to a random suffix if localStorage is unavailable (SSR / private).
 const BILL_COUNTER_KEY = "sth1r_bill_counter";
 const BILL_FY_KEY = "sth1r_bill_fy";
 
@@ -37,9 +50,9 @@ function getCurrentFY(): string {
   const now = new Date();
   const year = now.getFullYear();
   const month = now.getMonth() + 1; // 1-indexed
-  // Indian FY: Apr–Mar. If month >= 4, FY ends next year; else this year.
+  // Indian FY: April–March. Month >= 4 means we're in the FY that ends next year.
   const fyEnd = month >= 4 ? year + 1 : year;
-  return String(fyEnd).slice(2); // "26" for FY2025-26
+  return String(fyEnd).slice(2); // e.g. "26" for FY 2025-26
 }
 
 export const generateBillNumber = (): string => {
@@ -58,7 +71,7 @@ export const generateBillNumber = (): string => {
     localStorage.setItem(BILL_COUNTER_KEY, String(counter));
     return `STH-FY${fy}-${String(counter).padStart(6, "0")}`;
   } catch {
-    // Fallback if localStorage is unavailable (SSR, private mode)
+    // Fallback: random suffix (SSR / private browsing)
     const rand = crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase();
     return `STH-${rand}`;
   }
