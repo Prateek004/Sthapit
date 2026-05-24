@@ -42,10 +42,8 @@ export default function MenuItemCard({
     }
 
     if (cartEntries.length === 1) {
-      // Increment existing entry — no modal needed
       updateCartQty(cartEntries[0].cartId, cartEntries[0].qty + 1);
     } else {
-      // Fast-add
       addToCart({
         cartId: crypto.randomUUID(),
         menuItemId: item.id,
@@ -59,7 +57,7 @@ export default function MenuItemCard({
 
   /**
    * Minus button — decrement without opening modal.
-   * Only visible when item is already in cart and has no options.
+   * stopPropagation so the parent card button doesn't also fire.
    */
   const handleDecrement = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -68,14 +66,26 @@ export default function MenuItemCard({
     updateCartQty(entry.cartId, entry.qty - 1);
   };
 
+  /**
+   * Plus inside the stepper — stopPropagation so parent doesn't double-fire.
+   */
+  const handleIncrement = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    handlePress();
+  };
+
   const isOwner = state.session?.role === "owner";
 
+  // ── Compact card (POS grid) ───────────────────────────────────────────────
+  // Entire tile is now a <button> so tapping anywhere adds the item.
   if (compact) {
     return (
-      <div
-        className={`relative w-full rounded-xl border transition-all ${
+      <button
+        onClick={handlePress}
+        disabled={!item.isAvailable}
+        className={`relative w-full rounded-xl border transition-all text-left press ${
           !item.isAvailable
-            ? "opacity-40 border-gray-100 bg-gray-50"
+            ? "opacity-40 border-gray-100 bg-gray-50 cursor-not-allowed"
             : cartQty > 0
             ? "border-primary-300 bg-primary-50"
             : "border-gray-100 bg-white"
@@ -121,7 +131,10 @@ export default function MenuItemCard({
 
           {/* Qty stepper for no-option items already in cart */}
           {!hasOptions && cartQty > 0 ? (
-            <div className="flex items-center gap-1 bg-primary-500 rounded-lg overflow-hidden">
+            <div
+              className="flex items-center gap-1 bg-primary-500 rounded-lg overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
               <button
                 onClick={handleDecrement}
                 disabled={!item.isAvailable}
@@ -133,7 +146,7 @@ export default function MenuItemCard({
                 {cartQty}
               </span>
               <button
-                onClick={handlePress}
+                onClick={handleIncrement}
                 disabled={!item.isAvailable}
                 className="w-6 h-6 flex items-center justify-center press"
               >
@@ -141,10 +154,8 @@ export default function MenuItemCard({
               </button>
             </div>
           ) : (
-            <button
-              onClick={handlePress}
-              disabled={!item.isAvailable}
-              className={`flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-bold transition-all press ${
+            <div
+              className={`flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-bold ${
                 cartQty > 0
                   ? "bg-primary-500 text-white"
                   : "bg-gray-100 text-gray-700"
@@ -161,17 +172,19 @@ export default function MenuItemCard({
                   <span>{hasOptions ? "Choose" : "Add"}</span>
                 </>
               )}
-            </button>
+            </div>
           )}
         </div>
-      </div>
+      </button>
     );
   }
 
   // ── Full card (desktop / non-compact) ──────────────────────────────────────
   return (
-    <div
-      className={`relative w-full p-3 rounded-2xl border-2 text-left transition-all ${
+    <button
+      onClick={handlePress}
+      disabled={!item.isAvailable}
+      className={`relative w-full p-3 rounded-2xl border-2 text-left transition-all press ${
         !item.isAvailable
           ? "opacity-40 border-gray-100 bg-gray-50 cursor-not-allowed"
           : cartQty > 0
@@ -205,10 +218,7 @@ export default function MenuItemCard({
       </div>
 
       {/* Name */}
-      <p
-        className="text-sm font-bold text-gray-900 leading-tight line-clamp-2 mb-2 min-h-[2.5rem] cursor-pointer"
-        onClick={handlePress}
-      >
+      <p className="text-sm font-bold text-gray-900 leading-tight line-clamp-2 mb-2 min-h-[2.5rem]">
         {item.name}
       </p>
 
@@ -227,7 +237,10 @@ export default function MenuItemCard({
 
         {/* Stepper for no-option items already in cart */}
         {!hasOptions && cartQty > 0 ? (
-          <div className="flex items-center gap-1 bg-primary-500 rounded-xl overflow-hidden">
+          <div
+            className="flex items-center gap-1 bg-primary-500 rounded-xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
             <button
               onClick={handleDecrement}
               disabled={!item.isAvailable}
@@ -239,7 +252,7 @@ export default function MenuItemCard({
               {cartQty}
             </span>
             <button
-              onClick={handlePress}
+              onClick={handleIncrement}
               disabled={!item.isAvailable}
               className="w-8 h-8 flex items-center justify-center press"
             >
@@ -247,10 +260,8 @@ export default function MenuItemCard({
             </button>
           </div>
         ) : (
-          <button
-            onClick={handlePress}
-            disabled={!item.isAvailable}
-            className={`w-8 h-8 rounded-xl flex items-center justify-center transition-colors press ${
+          <div
+            className={`w-8 h-8 rounded-xl flex items-center justify-center transition-colors ${
               cartQty > 0 ? "bg-primary-500" : "bg-gray-100"
             }`}
           >
@@ -261,9 +272,9 @@ export default function MenuItemCard({
             ) : (
               <Plus size={14} className="text-gray-500" />
             )}
-          </button>
+          </div>
         )}
       </div>
-    </div>
+    </button>
   );
 }
