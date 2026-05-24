@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useApp } from "@/lib/store/AppContext";
 import { fmtRupee, calcDiscount, calcGST } from "@/lib/utils";
 import {
@@ -12,6 +12,8 @@ import {
   Bike,
   LayoutGrid,
   BookmarkCheck,
+  ClipboardList,
+  Printer,
 } from "lucide-react";
 import CheckoutModal from "./CheckoutModal";
 import type { ServiceMode } from "@/lib/types";
@@ -25,6 +27,52 @@ const SERVICE_MODES: {
   { mode: "takeaway", label: "Takeaway", Icon: ShoppingBag },
   { mode: "delivery", label: "Delivery", Icon: Bike },
 ];
+
+// Shared KOT print helper — used here and in CheckoutModal
+export function printKot(params: {
+  billNumber: string;
+  tableNumber?: number;
+  serviceMode: string;
+  items: Array<{
+    qty: number;
+    name: string;
+    selectedPortion?: string;
+    selectedAddOns: Array<{ name: string }>;
+    notes?: string;
+  }>;
+  businessName?: string;
+}): void {
+  const { billNumber, tableNumber, serviceMode, items, businessName } = params;
+  const tableInfo = tableNumber
+    ? `Table: ${tableNumber}`
+    : serviceMode.replace("_", " ").toUpperCase();
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>KOT #${billNumber}</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Courier New',monospace;font-size:13px;width:80mm;padding:4mm}.c{text-align:center}.b{font-weight:bold;font-size:15px}hr{border:none;border-top:2px dashed #000;margin:4px 0}.item{font-size:14px;margin:4px 0}</style></head><body>
+    <div class="c b">KITCHEN ORDER${businessName ? " — " + businessName : ""}</div>
+    <hr/>
+    <div class="c">${tableInfo} · #${billNumber}</div>
+    <div class="c">${new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</div>
+    <hr/>
+    ${items
+      .map(
+        (i) =>
+          `<div class="item">${i.qty}x ${i.name}${i.selectedPortion ? ` (${i.selectedPortion})` : ""}${i.selectedAddOns.length ? ` + ${i.selectedAddOns.map((a) => a.name).join(", ")}` : ""}${i.notes ? `<br/><em style="font-size:11px">-> ${i.notes}</em>` : ""}</div>`
+      )
+      .join("")}
+    <hr/>
+    </body></html>`;
+  const w = window.open("", "_blank", "width=300,height=400");
+  if (!w) {
+    alert("Allow popups to print KOT");
+    return;
+  }
+  w.document.write(html);
+  w.document.close();
+  w.focus();
+  setTimeout(() => {
+    w.print();
+    w.close();
+  }, 300);
+}
 
 interface Props {
   onClose?: () => void;
@@ -47,6 +95,7 @@ export default function CartPanel({ onClose }: Props) {
   const tablesEnabled = ss?.tablesEnabled ?? false;
   const tableCount = ss?.tableCount ?? 10;
   const openTableBilling = ss?.openTableBilling ?? false;
+  const kotEnabled = ss?.kotEnabled ?? false;
 
   const [discountType, setDiscountType] = useState<"flat" | "percent">("flat");
   const [discountInput, setDiscountInput] = useState("");
@@ -54,17 +103,10 @@ export default function CartPanel({ onClose }: Props) {
   const [showTablePicker, setShowTablePicker] = useState(false);
   const [holding, setHolding] = useState(false);
 
-  // Clear discount when cart empties
   useEffect(() => {
     if (cart.length === 0) setDiscountInput("");
   }, [cart.length]);
 
-  // ── Finance calculation (GST-compliant) ──────────────────────────────────
-  // subtotal   = sum of all line totals (incl. add-ons)
-  // discount   = applied to subtotal
-  // taxable    = subtotal − discount  (never negative)
-  // GST        = taxable × gstPercent / 100
-  // total      = taxable + GST
   const subtotalPaise = cart.reduce((sum, item) => {
     const ao = item.selectedAddOns.reduce((s, a) => s + a.pricePaise, 0);
     return sum + (item.unitPricePaise + ao) * item.qty;
@@ -78,9 +120,17 @@ export default function CartPanel({ onClose }: Props) {
   const totalPaise = afterDiscount + gstPaise;
   const itemCount = cart.reduce((s, i) => s + i.qty, 0);
 
-  // Guard: discount can't exceed subtotal
   const discountCapped = discountPaise >= subtotalPaise && discountValue > 0;
 
+  // ── Clear with confirmation ───────────────────────────────────────────────
+  const handleClearAll = useCallback(() => {
+    if (cart.length === 0) return;
+    if (!window.confirm(`Clear all ${itemCount} item${itemCount > 1 ? "s" : ""} from cart?`)) return;
+    clearCart();
+    setDiscountInput("");
+  }, [cart.length, itemCount, clearCart]);
+
+  // ── Hold to table — fires KOT immediately if kotEnabled ──────────────────
   const handleHold = async () => {
     if (!tableNumber) {
       showToast("Select a table first to hold", "error");
@@ -89,8 +139,21 @@ export default function CartPanel({ onClose }: Props) {
     if (cart.length === 0) return;
     setHolding(true);
     try {
-      await holdToTable(tableNumber);
-      showToast(`Cart held on Table ${tableNumber} ✓`);
+      const tab = await holdToTable(tableNumber);
+      if (kotEnabled) {
+        // Generate a temporary KOT reference from the held items
+        const kotRef = `KOT-T${tableNumber}-${Date.now().toString().slice(-6)}`;
+        printKot({
+          billNumber: kotRef,
+          tableNumber,
+          serviceMode: "dine_in",
+          items: cart,
+          businessName: session?.businessName,
+        });
+        showToast(`Table ${tableNumber} held — KOT sent to kitchen ✓`);
+      } else {
+        showToast(`Cart held on Table ${tableNumber} ✓`);
+      }
       onClose?.();
     } catch {
       showToast("Failed to hold order", "error");
@@ -193,10 +256,7 @@ export default function CartPanel({ onClose }: Props) {
           </h2>
           {cart.length > 0 && (
             <button
-              onClick={() => {
-                clearCart();
-                setDiscountInput("");
-              }}
+              onClick={handleClearAll}
               className="text-xs font-semibold text-red-500 press"
             >
               Clear all
@@ -373,18 +433,24 @@ export default function CartPanel({ onClose }: Props) {
               </div>
             </div>
 
-            {/* Hold button */}
+            {/* Hold button — shows KOT icon if kotEnabled */}
             {openTableBilling && serviceMode === "dine_in" && (
               <button
                 onClick={handleHold}
                 disabled={holding || !tableNumber}
                 className="w-full h-11 flex items-center justify-center gap-2 rounded-2xl border-2 border-amber-400 text-amber-700 font-bold text-sm press disabled:opacity-40"
               >
-                <BookmarkCheck size={16} />
+                {kotEnabled ? (
+                  <ClipboardList size={16} />
+                ) : (
+                  <BookmarkCheck size={16} />
+                )}
                 {holding
                   ? "Holding…"
                   : tableNumber
-                  ? `Hold on Table ${tableNumber}`
+                  ? kotEnabled
+                    ? `Hold Table ${tableNumber} + Fire KOT`
+                    : `Hold on Table ${tableNumber}`
                   : "Select table to Hold"}
               </button>
             )}
