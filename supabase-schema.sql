@@ -1,5 +1,5 @@
 -- ============================================================
--- Servezy — Supabase Schema
+-- Sth1r — Supabase Schema
 -- Run in Supabase SQL Editor (Settings → SQL Editor)
 -- ============================================================
 
@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS orders (
   bill_number          TEXT NOT NULL,
   items                JSONB NOT NULL DEFAULT '[]',
   service_mode         TEXT NOT NULL DEFAULT 'dine_in' CHECK (service_mode IN ('dine_in','takeaway','delivery')),
+  table_number         INTEGER,
   subtotal_paise       INTEGER NOT NULL DEFAULT 0,
   discount_paise       INTEGER NOT NULL DEFAULT 0,
   discount_type        TEXT NOT NULL DEFAULT 'flat' CHECK (discount_type IN ('flat','percent')),
@@ -48,6 +49,23 @@ CREATE POLICY "orders_owner_insert" ON orders FOR INSERT WITH CHECK (auth.uid() 
 CREATE POLICY "orders_owner_update" ON orders FOR UPDATE USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
 
 CREATE INDEX IF NOT EXISTS orders_user_created_idx ON orders (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS orders_table_idx        ON orders (user_id, table_number, created_at DESC);
+
+-- ── Open Tables ──────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS open_tables (
+  id           UUID PRIMARY KEY,
+  user_id      UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  table_number INTEGER NOT NULL,
+  items        JSONB NOT NULL DEFAULT '[]',
+  opened_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE open_tables ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "open_tables_self" ON open_tables
+  FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+
+CREATE INDEX IF NOT EXISTS open_tables_user_idx ON open_tables (user_id, table_number);
 
 -- ── Allow email suffix for synthetic auth ────────────────────
 -- Note: users sign up as username@servezy.app
