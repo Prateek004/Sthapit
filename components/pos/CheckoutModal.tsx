@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import Modal from "@/components/ui/Modal";
 import { useApp } from "@/lib/store/AppContext";
-import type { PaymentMethod } from "@/lib/types";
+import type { PaymentMethod, Order } from "@/lib/types";
 import { fmtRupee, fmtDate, toP, QUICK_CASH } from "@/lib/utils";
 import { printKot } from "@/components/pos/CartPanel";
 import {
@@ -29,15 +29,17 @@ interface Props {
   discountValue: number;
 }
 
-const PAY_METHODS = [
-  { id: "cash" as PaymentMethod, label: "Cash", Icon: Banknote },
-  { id: "upi" as PaymentMethod, label: "UPI", Icon: Smartphone },
-  { id: "split" as PaymentMethod, label: "Split", Icon: Banknote },
+const PAY_METHODS: {
+  id: PaymentMethod;
+  label: string;
+  Icon: React.ElementType;
+}[] = [
+  { id: "cash", label: "Cash", Icon: Banknote },
+  { id: "upi", label: "UPI", Icon: Smartphone },
+  { id: "split", label: "Split", Icon: Banknote },
 ];
 
 type PostTab = "kot" | "invoice" | "whatsapp";
-
-type PlacedOrder = Awaited<ReturnType<ReturnType<typeof useApp>["placeOrder"]>>;
 
 export default function CheckoutModal({
   open,
@@ -62,15 +64,15 @@ export default function CheckoutModal({
   const [splitUpi, setSplitUpi] = useState("");
   const [upiConfirmed, setUpiConfirmed] = useState(false);
   const [placing, setPlacing] = useState(false);
-  const [order, setOrder] = useState<PlacedOrder | null>(null);
+  const [order, setOrder] = useState<Order | null>(null);
   const [postTab, setPostTab] = useState<PostTab>("invoice");
   const [qrSrc, setQrSrc] = useState("");
   const [qrLoading, setQrLoading] = useState(false);
   const [showUpiQr, setShowUpiQr] = useState(false);
-  // Track whether KOT was already fired before payment
   const [kotFired, setKotFired] = useState(false);
   const invoiceRef = useRef<HTMLDivElement>(null);
 
+  // Reset all state whenever modal opens
   useEffect(() => {
     if (open) {
       setMethod("cash");
@@ -83,12 +85,11 @@ export default function CheckoutModal({
       setQrSrc("");
       setShowUpiQr(false);
       setKotFired(false);
-      // Default to KOT tab if kot is enabled, else invoice
       setPostTab(kotEnabled ? "kot" : "invoice");
     }
   }, [open, kotEnabled]);
 
-  // Generate UPI QR
+  // UPI QR generation
   useEffect(() => {
     if (!showUpiQr || !hasUpi) return;
     const amount = (totalPaise / 100).toFixed(2);
@@ -119,12 +120,10 @@ export default function CheckoutModal({
 
   const cashPaise = toP(Number(cashInput) || 0);
   const changePaise = Math.max(0, cashPaise - totalPaise);
-
   const splitCashP = toP(Number(splitCash) || 0);
   const splitUpiP = toP(Number(splitUpi) || 0);
   const splitTotal = splitCashP + splitUpiP;
   const splitOk = splitTotal >= totalPaise;
-  const splitShort = Math.max(0, totalPaise - splitTotal);
 
   const canConfirm =
     !placing &&
@@ -132,9 +131,11 @@ export default function CheckoutModal({
       (method === "cash" && cashInput !== "" && cashPaise >= totalPaise) ||
       (method === "split" && splitOk));
 
-  // ── Fire KOT before payment ───────────────────────────────────────────────
+  // ── Fire KOT before payment ─────────────────────────────────────────────
   const handleFireKot = () => {
-    const kotRef = `KOT${tableNumber ? `-T${tableNumber}` : ""}-${Date.now().toString().slice(-6)}`;
+    const kotRef = `KOT${tableNumber ? `-T${tableNumber}` : ""}-${Date.now()
+      .toString()
+      .slice(-6)}`;
     printKot({
       billNumber: kotRef,
       tableNumber,
@@ -147,20 +148,20 @@ export default function CheckoutModal({
   };
 
   const handleConfirm = async () => {
-    if (placing) return;
-
     if (!canConfirm) {
       if (method === "cash" && cashInput === "")
-        showToast("Enter cash received amount", "error");
+        showToast("Enter cash received", "error");
       else if (method === "cash" && cashPaise < totalPaise)
-        showToast(`Cash short by ${fmtRupee(totalPaise - cashPaise)}`, "error");
+        showToast(`Short by ${fmtRupee(totalPaise - cashPaise)}`, "error");
       else if (method === "split" && !splitOk)
-        showToast(`Split short by ${fmtRupee(splitShort)}`, "error");
+        showToast(
+          `Split short by ${fmtRupee(totalPaise - splitTotal)}`,
+          "error"
+        );
       else if (method === "upi" && !upiConfirmed)
-        showToast("Confirm UPI payment received first", "error");
+        showToast("Confirm UPI received first", "error");
       return;
     }
-
     setPlacing(true);
     try {
       const placed = await placeOrder({
@@ -182,7 +183,7 @@ export default function CheckoutModal({
     }
   };
 
-  const handlePrint = () => {
+  const handlePrintInvoice = () => {
     const el = invoiceRef.current;
     if (!el) return;
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Invoice #${order?.billNumber}</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Courier New',monospace;font-size:12px;width:80mm;padding:4mm}.c{text-align:center}.b{font-weight:bold}.row{display:flex;justify-content:space-between}hr{border:none;border-top:1px dashed #000;margin:4px 0}</style></head><body>${el.innerHTML}</body></html>`;
@@ -220,7 +221,9 @@ export default function CheckoutModal({
       ``,
       ...order.items.map((i) => {
         const ao = i.selectedAddOns.reduce((s, a) => s + a.pricePaise, 0);
-        return `• ${i.name} x${i.qty}  ${fmtRupee((i.unitPricePaise + ao) * i.qty)}`;
+        return `• ${i.name} x${i.qty}  ${fmtRupee(
+          (i.unitPricePaise + ao) * i.qty
+        )}`;
       }),
       ``,
       `Subtotal: ${fmtRupee(order.subtotalPaise)}`,
@@ -237,7 +240,10 @@ export default function CheckoutModal({
     ]
       .filter(Boolean)
       .join("\n");
-    window.open(`https://wa.me/?text=${encodeURIComponent(lines)}`, "_blank");
+    window.open(
+      `https://wa.me/?text=${encodeURIComponent(lines)}`,
+      "_blank"
+    );
   };
 
   const handleDone = () => {
@@ -245,15 +251,16 @@ export default function CheckoutModal({
     onClose();
   };
 
-  // ── Pre-checkout screen ───────────────────────────────────────────────────
+  // ── Pre-payment screen ──────────────────────────────────────────────────
   if (!order) {
     return (
       <Modal open={open} onClose={onClose} title="Checkout">
         <div className="px-5 pb-6 space-y-4 pt-1">
-          {/* KOT fire-before-payment — only shown when kotEnabled */}
+
+          {/* KOT fire-before-payment banner */}
           {kotEnabled && cart.length > 0 && (
             <div
-              className={`rounded-2xl p-3 flex items-center gap-3 border-2 ${
+              className={`rounded-2xl p-3 flex items-center gap-3 border-2 transition-colors ${
                 kotFired
                   ? "border-green-400 bg-green-50"
                   : "border-orange-300 bg-orange-50"
@@ -269,7 +276,9 @@ export default function CheckoutModal({
                     kotFired ? "text-green-700" : "text-orange-700"
                   }`}
                 >
-                  {kotFired ? "KOT sent to kitchen ✓" : "Send to kitchen first?"}
+                  {kotFired
+                    ? "KOT sent to kitchen ✓"
+                    : "Send to kitchen first?"}
                 </p>
                 <p className="text-xs text-gray-400">
                   {kotFired
@@ -288,28 +297,32 @@ export default function CheckoutModal({
             </div>
           )}
 
-          {/* Summary */}
+          {/* Order summary */}
           <div className="bg-gray-50 rounded-2xl p-4 space-y-1.5 text-sm">
             <div className="flex justify-between text-gray-500">
               <span>Subtotal</span>
               <span className="font-semibold">{fmtRupee(subtotalPaise)}</span>
             </div>
             {discountPaise > 0 && (
-              <div className="flex justify-between text-green-600">
-                <span>
-                  Discount
-                  {discountType === "percent" ? ` (${discountValue}%)` : ""}
-                </span>
-                <span className="font-semibold">−{fmtRupee(discountPaise)}</span>
-              </div>
-            )}
-            {discountPaise > 0 && (
-              <div className="flex justify-between text-gray-400 text-xs">
-                <span>Taxable</span>
-                <span className="font-semibold">
-                  {fmtRupee(subtotalPaise - discountPaise)}
-                </span>
-              </div>
+              <>
+                <div className="flex justify-between text-green-600">
+                  <span>
+                    Discount
+                    {discountType === "percent"
+                      ? ` (${discountValue}%)`
+                      : ""}
+                  </span>
+                  <span className="font-semibold">
+                    −{fmtRupee(discountPaise)}
+                  </span>
+                </div>
+                <div className="flex justify-between text-gray-400 text-xs">
+                  <span>Taxable</span>
+                  <span className="font-semibold">
+                    {fmtRupee(subtotalPaise - discountPaise)}
+                  </span>
+                </div>
+              </>
             )}
             {gstPercent > 0 && (
               <div className="flex justify-between text-gray-500">
@@ -415,9 +428,8 @@ export default function CheckoutModal({
                   {fmtRupee(totalPaise)}
                 </p>
               </div>
-
               {hasUpi && (
-                <div>
+                <>
                   {!showUpiQr ? (
                     <button
                       onClick={() => setShowUpiQr(true)}
@@ -445,7 +457,9 @@ export default function CheckoutModal({
                           />
                         )}
                         {!qrLoading && !qrSrc && (
-                          <p className="text-xs text-gray-400">QR unavailable</p>
+                          <p className="text-xs text-gray-400">
+                            QR unavailable
+                          </p>
                         )}
                       </div>
                       <p className="text-xs text-gray-500 font-semibold">
@@ -453,15 +467,13 @@ export default function CheckoutModal({
                       </p>
                     </div>
                   )}
-                </div>
+                </>
               )}
-
               {!hasUpi && (
                 <p className="text-xs text-gray-400 text-center">
                   Add UPI ID in Settings to show QR code
                 </p>
               )}
-
               <label
                 className={`flex items-center gap-3 p-3 rounded-2xl border-2 cursor-pointer select-none transition-colors ${
                   upiConfirmed
@@ -526,7 +538,7 @@ export default function CheckoutModal({
                 {splitOk
                   ? `Covered ✓  (${fmtRupee(splitTotal)})`
                   : splitTotal > 0
-                  ? `Short by ${fmtRupee(splitShort)}`
+                  ? `Short by ${fmtRupee(totalPaise - splitTotal)}`
                   : `Need ${fmtRupee(totalPaise)}`}
               </div>
             </div>
@@ -545,13 +557,13 @@ export default function CheckoutModal({
     );
   }
 
-  // ── Post-checkout screen ──────────────────────────────────────────────────
+  // ── Post-payment screen ─────────────────────────────────────────────────
   const postTabs: { id: PostTab; label: string; Icon: React.ElementType }[] = [
     ...(kotEnabled
       ? [{ id: "kot" as PostTab, label: "KOT", Icon: ClipboardList }]
       : []),
-    { id: "invoice", label: "Invoice", Icon: Printer },
-    { id: "whatsapp", label: "WhatsApp", Icon: MessageCircle },
+    { id: "invoice" as PostTab, label: "Invoice", Icon: Printer },
+    { id: "whatsapp" as PostTab, label: "WhatsApp", Icon: MessageCircle },
   ];
 
   return (
@@ -629,7 +641,8 @@ export default function CheckoutModal({
                       )}
                       {item.selectedAddOns.length > 0 && (
                         <p className="text-xs text-gray-400">
-                          + {item.selectedAddOns.map((a) => a.name).join(", ")}
+                          +{" "}
+                          {item.selectedAddOns.map((a) => a.name).join(", ")}
                         </p>
                       )}
                       {item.notes && (
@@ -659,7 +672,7 @@ export default function CheckoutModal({
                 className="font-mono text-xs leading-relaxed bg-white border border-dashed border-gray-300 rounded-xl p-4 mx-auto"
                 style={{ maxWidth: "320px" }}
               >
-                <div className="c b text-sm mb-1">
+                <div className="text-center font-bold text-sm mb-1">
                   {session?.businessName ?? "Sth1r"}
                 </div>
                 <div className="border-t border-dashed border-gray-300 my-2" />
@@ -682,7 +695,9 @@ export default function CheckoutModal({
                   return (
                     <div key={i} className="mb-1">
                       <div className="flex justify-between">
-                        <span className="flex-1 truncate pr-2">{item.name}</span>
+                        <span className="flex-1 truncate pr-2">
+                          {item.name}
+                        </span>
                         <span>{fmtRupee(line)}</span>
                       </div>
                       <div className="text-gray-400 pl-2">
@@ -724,10 +739,12 @@ export default function CheckoutModal({
                   </div>
                 )}
                 <div className="border-t border-dashed border-gray-300 my-3" />
-                <div className="text-center text-gray-400">Thank you! Visit again 🙏</div>
+                <div className="text-center text-gray-400">
+                  Thank you! Visit again 🙏
+                </div>
               </div>
               <button
-                onClick={handlePrint}
+                onClick={handlePrintInvoice}
                 className="mt-4 w-full h-11 flex items-center justify-center gap-2 bg-gray-900 text-white rounded-2xl font-bold text-sm press"
               >
                 <Printer size={16} />
