@@ -1,0 +1,883 @@
+<!--
+====================================================================
+  STHAPPIT LANDING PAGE — Integrated with Webapp
+  File: sthappit-landing-v2.html  (ready to commit to GitHub)
+====================================================================
+
+WHAT WAS CHANGED FROM THE ORIGINAL:
+  4 CTA links now point to your webapp URL instead of "#get-started"
+
+  Line 536 — Nav "Get Started →" button
+  Line 557 — Hero "Start Free Trial" button
+  Line 721 — Section "Start for free →" button
+  Line 807 — Final CTA "🚀 Start Free Trial" button
+
+  All 4 changed from:
+    href="#get-started"  OR  href="https://sthappit.com"
+
+  Changed to:
+    href="https://sthapit-one.vercel.app/auth"
+
+HOW TO DEPLOY:
+  Landing page  →  sthappit.com          (Netlify / Vercel / GitHub Pages)
+  Webapp        →  app.sthappit.com      (Vercel — deploy Sthapit-main/)
+
+  If your webapp URL is different, do a find-replace:
+    Find:     https://sthapit-one.vercel.app/auth
+    Replace:  YOUR_ACTUAL_WEBAPP_URL/auth
+
+NOTHING ELSE CHANGED — all CSS, animations, fonts, sections are original.
+====================================================================
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<title>Sthappit — Smart POS for Indian F&B</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=Instrument+Serif:ital@0;1&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&display=swap" rel="stylesheet" />
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --fire: #E8590C;
+  --fire-dark: #B83E06;
+  --fire-glow: rgba(232,89,12,0.25);
+  --ember: #FAD4BA;
+  --coal: #1A1208;
+  --smoke: #3D2E1E;
+  --ash: #7A6456;
+  --sand: #FDF6EE;
+  --cream: #FEF9F4;
+  --white: #FFFFFF;
+  --green: #2D6A4F;
+  --blue: #1A73E8;
+}
+
+html { scroll-behavior: smooth; }
+body {
+  font-family: 'DM Sans', sans-serif;
+  background: var(--white);
+  color: var(--coal);
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── SCROLLBAR ── */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--ember); border-radius: 2px; }
+
+/* ── NAV ── */
+nav {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+  padding: 14px 24px;
+  display: flex; align-items: center; justify-content: space-between;
+  background: rgba(255,255,255,0.9);
+  backdrop-filter: blur(20px);
+  border-bottom: 1px solid rgba(232,89,12,0.08);
+  transition: box-shadow 0.3s;
+}
+.nav-logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+.logo-mark {
+  width: 38px; height: 38px; background: var(--fire);
+  border-radius: 11px;
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'Syne', sans-serif; font-weight: 800; font-size: 20px;
+  color: white; letter-spacing: -1px;
+  box-shadow: 0 4px 12px var(--fire-glow);
+}
+.logo-text {
+  font-family: 'Syne', sans-serif; font-weight: 800; font-size: 21px;
+  color: var(--coal); letter-spacing: -0.5px;
+}
+.logo-text span { color: var(--fire); }
+.nav-links { display: flex; align-items: center; gap: 28px; }
+.nav-link { font-size: 14px; font-weight: 500; color: var(--ash); text-decoration: none; transition: color 0.2s; }
+.nav-link:hover { color: var(--fire); }
+.nav-cta {
+  background: var(--coal); color: white; border: none; cursor: pointer;
+  padding: 10px 20px; border-radius: 50px;
+  font-family: 'DM Sans', sans-serif; font-weight: 600; font-size: 14px;
+  text-decoration: none; display: inline-flex; align-items: center; gap: 6px;
+  transition: all 0.2s;
+}
+.nav-cta:hover { background: var(--fire); transform: translateY(-1px); }
+.nav-links-desktop { display: flex; }
+@media (max-width: 640px) { .nav-links-desktop { display: none; } }
+
+/* ── HERO ── */
+.hero {
+  min-height: 100dvh;
+  background: linear-gradient(135deg, var(--fire) 0%, #F97316 50%, #FB923C 100%);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; padding: 110px 24px 80px;
+  position: relative; overflow: hidden;
+}
+.hero-grid {
+  position: absolute; inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M10 0 L0 0 0 10' fill='none' stroke='white' stroke-width='0.5' opacity='0.1'/%3E%3C/svg%3E");
+  pointer-events: none;
+}
+.hero-glow {
+  position: absolute; bottom: -200px; left: 50%; transform: translateX(-50%);
+  width: 800px; height: 400px; border-radius: 50%;
+  background: rgba(0,0,0,0.15); filter: blur(60px);
+  pointer-events: none;
+}
+.hero-badge {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3);
+  backdrop-filter: blur(8px);
+  border-radius: 50px; padding: 7px 16px 7px 10px;
+  font-size: 13px; font-weight: 600; color: white;
+  margin-bottom: 28px;
+  animation: fadeUp 0.6s ease both;
+}
+.hero-badge-dot {
+  width: 22px; height: 22px; border-radius: 50%;
+  background: rgba(255,255,255,0.25);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px;
+}
+.hero h1 {
+  font-family: 'Syne', sans-serif; font-weight: 800;
+  font-size: clamp(40px, 7vw, 86px);
+  line-height: 1.0; letter-spacing: -2px;
+  color: white; max-width: 860px;
+  animation: fadeUp 0.6s ease 0.1s both;
+  margin-bottom: 16px;
+}
+.hero h1 em {
+  font-family: 'Instrument Serif', serif; font-style: italic;
+  font-weight: 400; color: rgba(255,255,255,0.85);
+}
+.hero-sub {
+  font-size: clamp(16px, 2vw, 20px); color: rgba(255,255,255,0.88);
+  max-width: 520px; line-height: 1.6;
+  animation: fadeUp 0.6s ease 0.2s both; margin-bottom: 36px;
+}
+.hero-actions {
+  display: flex; flex-wrap: wrap; gap: 12px; justify-content: center;
+  animation: fadeUp 0.6s ease 0.3s both; margin-bottom: 56px;
+}
+.btn-white {
+  background: white; color: var(--fire); border: none; cursor: pointer;
+  padding: 15px 30px; border-radius: 50px;
+  font-family: 'DM Sans', sans-serif; font-weight: 700; font-size: 15px;
+  display: inline-flex; align-items: center; gap: 8px;
+  transition: all 0.2s; box-shadow: 0 4px 24px rgba(0,0,0,0.2);
+}
+.btn-white:hover { transform: translateY(-2px) scale(1.02); box-shadow: 0 8px 32px rgba(0,0,0,0.25); }
+.btn-outline-white {
+  background: transparent; color: white;
+  border: 2px solid rgba(255,255,255,0.5); cursor: pointer;
+  padding: 13px 24px; border-radius: 50px;
+  font-family: 'DM Sans', sans-serif; font-weight: 600; font-size: 15px;
+  display: inline-flex; align-items: center; gap: 8px;
+  transition: all 0.2s;
+}
+.btn-outline-white:hover { background: rgba(255,255,255,0.15); border-color: white; }
+
+/* HERO MOCKUP */
+.hero-mockup {
+  animation: fadeUp 0.8s ease 0.4s both;
+  width: 100%; max-width: 900px;
+  display: grid; grid-template-columns: 1fr auto;
+  gap: 16px; align-items: flex-end;
+}
+.desktop-card {
+  background: white; border-radius: 16px; padding: 20px;
+  box-shadow: 0 32px 80px rgba(0,0,0,0.3), 0 0 0 1px rgba(255,255,255,0.1);
+}
+.dc-dots { display: flex; gap: 6px; margin-bottom: 16px; }
+.dc-dot { width: 10px; height: 10px; border-radius: 50%; }
+.dc-bill-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 12px; background: #F8F8F6; border-radius: 10px;
+  margin-bottom: 8px; font-size: 14px;
+}
+.dc-bill-row .name { font-weight: 500; color: var(--coal); }
+.dc-bill-row .price { font-weight: 700; color: var(--coal); }
+.dc-total-section { border-top: 2px dashed #E5E0D8; padding-top: 14px; margin-top: 4px; }
+.dc-total-row { display: flex; justify-content: space-between; font-size: 13px; color: var(--ash); margin-bottom: 6px; }
+.dc-grand { display: flex; justify-content: space-between; font-size: 18px; font-weight: 800; color: var(--coal); margin: 10px 0 14px; }
+.dc-grand .val { color: var(--fire); }
+.dc-btn {
+  width: 100%; background: var(--fire); color: white; border: none; cursor: pointer;
+  padding: 13px; border-radius: 10px; font-family: 'DM Sans', sans-serif;
+  font-weight: 700; font-size: 15px;
+}
+.dc-offline-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: #FFF3CD; border: 1px solid #FFD700; color: #7A5200;
+  border-radius: 8px; padding: 5px 10px; font-size: 11px; font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.phone-card {
+  background: white; border-radius: 24px; padding: 16px;
+  width: 190px; flex-shrink: 0;
+  box-shadow: 0 24px 60px rgba(0,0,0,0.3), 0 0 0 1px rgba(255,255,255,0.1);
+}
+.ph-notch { width: 60px; height: 5px; background: #E5E0D8; border-radius: 3px; margin: 0 auto 14px; }
+.ph-header { font-family: 'Syne', sans-serif; font-weight: 800; font-size: 13px; color: var(--coal); margin-bottom: 10px; }
+.ph-sync-badge {
+  display: flex; align-items: center; gap: 5px;
+  background: #EDF7ED; border-radius: 6px; padding: 5px 8px;
+  font-size: 10px; font-weight: 600; color: #1B5E20;
+  margin-bottom: 10px;
+}
+.ph-sync-dot { width: 6px; height: 6px; border-radius: 50%; background: #4CAF50; }
+.ph-items { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.ph-item { background: #F8F8F6; border-radius: 8px; padding: 8px 10px; display: flex; justify-content: space-between; align-items: center; }
+.ph-item-name { font-size: 11px; font-weight: 500; color: var(--coal); }
+.ph-item-price { font-size: 11px; font-weight: 700; color: var(--coal); }
+.ph-cta { background: var(--fire); color: white; border-radius: 8px; padding: 9px; text-align: center; font-size: 12px; font-weight: 700; }
+
+/* ── TRUST STRIP ── */
+.trust-strip {
+  background: #F8F5F0;
+  padding: 18px 24px;
+  display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 32px;
+  border-bottom: 1px solid rgba(26,18,8,0.06);
+}
+.trust-item { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; color: var(--smoke); }
+.trust-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--fire); }
+
+/* ── STATS ── */
+.stats-strip {
+  background: var(--coal); padding: 32px 24px;
+  display: flex; flex-wrap: wrap; justify-content: center;
+}
+.stat-item {
+  padding: 16px 40px; text-align: center;
+  border-right: 1px solid rgba(255,255,255,0.07);
+  min-width: 140px;
+}
+.stat-item:last-child { border-right: none; }
+.stat-num {
+  font-family: 'Syne', sans-serif; font-weight: 800;
+  font-size: clamp(26px, 3vw, 40px); color: var(--fire); letter-spacing: -1px;
+}
+.stat-label { font-size: 12px; color: rgba(255,255,255,0.35); margin-top: 3px; }
+
+/* ── SECTIONS ── */
+.section { padding: clamp(64px, 8vw, 108px) clamp(20px, 5vw, 80px); }
+.section-tag {
+  display: inline-block; font-size: 11px; font-weight: 700;
+  letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--fire); margin-bottom: 14px;
+}
+.section-title {
+  font-family: 'Syne', sans-serif; font-weight: 800;
+  font-size: clamp(28px, 4vw, 54px); letter-spacing: -1.5px;
+  line-height: 1.07; color: var(--coal); margin-bottom: 18px; max-width: 620px;
+}
+.section-title em {
+  font-family: 'Instrument Serif', serif; font-style: italic;
+  color: var(--fire); font-weight: 400;
+}
+.section-body { font-size: 16px; line-height: 1.75; color: var(--ash); max-width: 480px; margin-bottom: 40px; }
+.centered { text-align: center; }
+.centered .section-title, .centered .section-body { margin-left: auto; margin-right: auto; }
+
+/* ── FEATURES GRID ── */
+.features-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px; max-width: 1100px; margin: 0 auto;
+}
+.feature-card {
+  background: white; border-radius: 20px; padding: 28px;
+  border: 1.5px solid rgba(26,18,8,0.07); transition: all 0.25s;
+  position: relative; overflow: hidden;
+}
+.feature-card::after {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  background: var(--fire); transform: scaleX(0); transform-origin: left; transition: transform 0.3s;
+}
+.feature-card:hover { transform: translateY(-4px); box-shadow: 0 16px 48px rgba(26,18,8,0.09); }
+.feature-card:hover::after { transform: scaleX(1); }
+.feature-icon {
+  width: 50px; height: 50px; background: #FEF0E8; border-radius: 14px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 24px; margin-bottom: 16px;
+}
+.feature-title { font-family: 'Syne', sans-serif; font-weight: 700; font-size: 17px; color: var(--coal); margin-bottom: 8px; }
+.feature-body { font-size: 14px; color: var(--ash); line-height: 1.65; }
+
+/* ── CLOUD BACKUP SECTION ── */
+.backup-section {
+  background: linear-gradient(135deg, #0F1B2D 0%, #1A2D47 100%);
+  padding: clamp(64px, 8vw, 108px) clamp(20px, 5vw, 80px);
+  position: relative; overflow: hidden;
+}
+.backup-section::before {
+  content: ''; position: absolute;
+  top: -200px; right: -100px; width: 600px; height: 600px; border-radius: 50%;
+  background: radial-gradient(circle, rgba(26,115,232,0.15) 0%, transparent 70%);
+  pointer-events: none;
+}
+.backup-section::after {
+  content: ''; position: absolute;
+  bottom: -150px; left: -100px; width: 500px; height: 500px; border-radius: 50%;
+  background: radial-gradient(circle, rgba(232,89,12,0.12) 0%, transparent 70%);
+  pointer-events: none;
+}
+.backup-inner {
+  max-width: 1100px; margin: 0 auto;
+  display: flex; flex-wrap: wrap; gap: 60px; align-items: center;
+}
+.backup-text { flex: 1; min-width: 280px; position: relative; z-index: 1; }
+.backup-text .section-tag { color: #60A5FA; }
+.backup-text .section-title { color: white; }
+.backup-text .section-title em { color: #60A5FA; }
+.backup-text .section-body { color: rgba(255,255,255,0.5); }
+.backup-checks { display: flex; flex-direction: column; gap: 14px; margin-top: 8px; }
+.backup-check {
+  display: flex; align-items: flex-start; gap: 12px;
+}
+.check-icon {
+  width: 24px; height: 24px; border-radius: 50%; background: rgba(96,165,250,0.15);
+  border: 1px solid rgba(96,165,250,0.3);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; font-size: 12px; margin-top: 1px;
+}
+.check-text { font-size: 15px; color: rgba(255,255,255,0.75); line-height: 1.5; }
+.check-text strong { color: white; font-weight: 600; }
+
+/* BACKUP VISUAL */
+.backup-visual { flex: 1; min-width: 280px; position: relative; z-index: 1; }
+.sync-diagram {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 24px; padding: 32px;
+}
+.sync-row { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+.sync-node {
+  flex: 1; background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 14px; padding: 16px;
+  text-align: center;
+}
+.sync-node-icon { font-size: 28px; margin-bottom: 6px; }
+.sync-node-label { font-size: 11px; font-weight: 600; color: rgba(255,255,255,0.5); text-transform: uppercase; letter-spacing: 0.08em; }
+.sync-node-val { font-size: 13px; font-weight: 700; color: white; margin-top: 2px; }
+.sync-arrow {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  flex-shrink: 0;
+}
+.sync-arrow-line { width: 2px; height: 30px; background: linear-gradient(to bottom, rgba(96,165,250,0.4), rgba(96,165,250,0.8)); border-radius: 1px; }
+.sync-arrow-tip { font-size: 10px; color: #60A5FA; }
+.sync-status {
+  background: rgba(96,165,250,0.1); border: 1px solid rgba(96,165,250,0.2);
+  border-radius: 12px; padding: 14px 16px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.sync-status-left { display: flex; align-items: center; gap: 10px; }
+.sync-pulse {
+  width: 10px; height: 10px; border-radius: 50%; background: #4CAF50;
+  position: relative; flex-shrink: 0;
+}
+.sync-pulse::after {
+  content: ''; position: absolute; inset: -4px;
+  border-radius: 50%; border: 2px solid #4CAF50; opacity: 0.4;
+  animation: pulse 1.5s ease infinite;
+}
+.sync-status-text { font-size: 13px; font-weight: 600; color: white; }
+.sync-status-sub { font-size: 11px; color: rgba(255,255,255,0.4); }
+.sync-status-time { font-size: 11px; color: rgba(255,255,255,0.35); }
+.offline-card {
+  background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 16px; padding: 18px;
+  display: flex; align-items: flex-start; gap: 12px; margin-bottom: 16px;
+}
+.offline-card-icon {
+  width: 44px; height: 44px; border-radius: 12px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px; flex-shrink: 0;
+}
+.offline-card-title { font-size: 14px; font-weight: 700; color: white; margin-bottom: 4px; }
+.offline-card-body { font-size: 12px; color: rgba(255,255,255,0.4); line-height: 1.5; }
+
+/* ── OFFLINE SECTION ── */
+.offline-section-wrap {
+  background: var(--coal); padding: clamp(64px, 8vw, 108px) clamp(20px, 5vw, 80px);
+  position: relative; overflow: hidden;
+}
+.offline-section-wrap::before {
+  content: ''; position: absolute; top: -100px; right: -100px;
+  width: 500px; height: 500px; border-radius: 50%;
+  background: radial-gradient(circle, var(--fire-glow) 0%, transparent 70%);
+  pointer-events: none;
+}
+.offline-inner {
+  max-width: 1100px; margin: 0 auto;
+  display: flex; flex-wrap: wrap; gap: 60px; align-items: center;
+}
+.offline-text { flex: 1; min-width: 280px; position: relative; z-index: 1; }
+.offline-text .section-tag { color: var(--fire); }
+.offline-text .section-title { color: white; }
+.offline-text .section-title em { color: var(--fire); }
+.offline-text .section-body { color: rgba(255,255,255,0.45); }
+.offline-check { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.offline-check-icon { color: var(--fire); font-size: 16px; flex-shrink: 0; }
+.offline-check-text { font-size: 15px; color: rgba(255,255,255,0.7); }
+.offline-visual { flex: 1; min-width: 280px; position: relative; z-index: 1; }
+.offline-chips { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; }
+.offline-chip {
+  display: flex; align-items: center; gap: 8px;
+  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 10px; padding: 10px 14px;
+  font-size: 13px; color: rgba(255,255,255,0.65); font-weight: 500;
+}
+.chip-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--fire); }
+.chip-dot.green { background: #52B788; }
+
+/* ── HOW IT WORKS ── */
+.steps-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 24px; max-width: 1100px; margin: 48px auto 0;
+}
+.step-card {
+  padding: 28px; border: 1.5px solid rgba(26,18,8,0.08);
+  border-radius: 20px; background: white; transition: all 0.2s;
+}
+.step-card:hover { border-color: var(--fire); box-shadow: 0 8px 32px rgba(232,89,12,0.1); transform: translateY(-2px); }
+.step-num {
+  font-family: 'Syne', sans-serif; font-weight: 800; font-size: 52px;
+  color: rgba(232,89,12,0.15); line-height: 1; margin-bottom: 10px;
+}
+.step-title { font-family: 'Syne', sans-serif; font-weight: 700; font-size: 17px; color: var(--coal); margin-bottom: 8px; }
+.step-body { font-size: 14px; color: var(--ash); line-height: 1.6; }
+
+/* ── RECEIPT TYPES ── */
+.receipt-cards {
+  display: flex; flex-wrap: wrap; gap: 16px; max-width: 1100px; margin: 48px auto 0;
+}
+.receipt-card {
+  background: white; border-radius: 20px; padding: 28px 24px;
+  border: 1.5px solid rgba(26,18,8,0.07); flex: 1; min-width: 220px;
+  transition: all 0.2s;
+}
+.receipt-card:hover { transform: translateY(-4px); box-shadow: 0 12px 40px rgba(0,0,0,0.08); border-color: var(--fire); }
+.receipt-icon { font-size: 30px; margin-bottom: 14px; }
+.receipt-name { font-family: 'Syne', sans-serif; font-weight: 700; font-size: 17px; color: var(--coal); margin-bottom: 6px; }
+.receipt-desc { font-size: 14px; color: var(--ash); line-height: 1.55; margin-bottom: 16px; }
+.receipt-features { list-style: none; }
+.receipt-features li { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--ash); margin-bottom: 6px; }
+.receipt-features li::before { content: '✓'; color: var(--fire); font-weight: 700; font-size: 12px; }
+
+/* ── BUSINESS TYPES ── */
+.business-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px; max-width: 1100px; margin: 48px auto 0;
+}
+.biz-card {
+  border: 1.5px solid rgba(26,18,8,0.08); border-radius: 18px; padding: 24px 16px;
+  text-align: center; transition: all 0.2s; background: white;
+}
+.biz-card:hover { border-color: var(--fire); transform: translateY(-3px); box-shadow: 0 8px 28px rgba(232,89,12,0.1); }
+.biz-emoji { font-size: 32px; margin-bottom: 10px; }
+.biz-name { font-family: 'Syne', sans-serif; font-weight: 700; font-size: 14px; color: var(--coal); margin-bottom: 4px; }
+.biz-desc { font-size: 12px; color: var(--ash); line-height: 1.4; }
+
+/* ── CTA ── */
+.cta-section {
+  padding: clamp(80px, 10vw, 120px) clamp(24px, 5vw, 80px);
+  background: linear-gradient(135deg, var(--fire) 0%, #F97316 60%, #FB923C 100%);
+  text-align: center; position: relative; overflow: hidden;
+}
+.cta-section::before {
+  content: 'सथापित'; position: absolute;
+  font-family: 'Syne', sans-serif; font-weight: 800;
+  font-size: clamp(60px, 15vw, 180px);
+  color: rgba(255,255,255,0.06);
+  top: 50%; left: 50%; transform: translate(-50%, -50%);
+  white-space: nowrap; pointer-events: none; letter-spacing: -6px;
+}
+.cta-section h2 {
+  font-family: 'Syne', sans-serif; font-weight: 800;
+  font-size: clamp(30px, 5vw, 64px);
+  letter-spacing: -2px; line-height: 1.05;
+  color: white; margin-bottom: 16px; position: relative;
+}
+.cta-section h2 em { font-family: 'Instrument Serif', serif; font-style: italic; font-weight: 400; }
+.cta-sub { font-size: 18px; color: rgba(255,255,255,0.8); margin-bottom: 36px; position: relative; }
+.cta-checks { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 24px; position: relative; margin-top: 20px; }
+.cta-check { display: flex; align-items: center; gap: 6px; font-size: 13px; color: rgba(255,255,255,0.7); font-weight: 500; }
+
+/* ── FOOTER ── */
+footer {
+  background: var(--coal); padding: 40px clamp(24px, 5vw, 80px);
+  display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 20px;
+}
+.footer-logo { font-family: 'Syne', sans-serif; font-weight: 800; font-size: 22px; color: white; }
+.footer-logo span { color: var(--fire); }
+.footer-tagline { font-size: 12px; color: rgba(255,255,255,0.25); margin-top: 4px; }
+.footer-links { display: flex; gap: 24px; }
+.footer-link { font-size: 13px; color: rgba(255,255,255,0.35); text-decoration: none; transition: color 0.2s; }
+.footer-link:hover { color: var(--fire); }
+.footer-copy { font-size: 12px; color: rgba(255,255,255,0.18); }
+
+/* ── ANIMATIONS ── */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(22px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes pulse {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50%       { opacity: 0.1; transform: scale(1.6); }
+}
+@keyframes spin-slow { to { transform: rotate(360deg); } }
+.reveal { opacity: 0; transform: translateY(24px); transition: opacity 0.65s ease, transform 0.65s ease; }
+.reveal.visible { opacity: 1; transform: translateY(0); }
+.reveal-d1 { transition-delay: 0.1s; }
+.reveal-d2 { transition-delay: 0.2s; }
+.reveal-d3 { transition-delay: 0.3s; }
+
+/* ── RESPONSIVE ── */
+@media (max-width: 680px) {
+  .hero-mockup { grid-template-columns: 1fr; }
+  .phone-card { display: none; }
+  .stat-item { border-right: none; border-bottom: 1px solid rgba(255,255,255,0.07); width: 50%; }
+  .stat-item:nth-child(2) { border-right: none; }
+  .backup-inner, .offline-inner { flex-direction: column; gap: 40px; }
+}
+@media (max-width: 420px) {
+  .stat-item { width: 100%; }
+  nav { padding: 12px 16px; }
+}
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav id="navbar">
+  <a href="#" class="nav-logo">
+    <div class="logo-mark">S</div>
+    <span class="logo-text">Sthap<span>pit</span></span>
+  </a>
+  <div class="nav-links nav-links-desktop">
+    <a href="#features" class="nav-link">Features</a>
+    <a href="#backup" class="nav-link">Backup</a>
+    <a href="#how" class="nav-link">How it works</a>
+  </div>
+  <a href="https://sthapit-one.vercel.app/auth" class="nav-cta">Get Started →</a>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-grid"></div>
+  <div class="hero-glow"></div>
+
+  <div class="hero-badge">
+    <div class="hero-badge-dot">🇮🇳</div>
+    Built for Indian F&B · Offline-First
+  </div>
+
+  <h1>Billing that works<br/><em>even offline.</em></h1>
+
+  <p class="hero-sub">
+    Fast, offline-first POS for your café, restaurant, or food business.
+    GST-compliant billing, automatic cloud backup, and UPI — all in one.
+  </p>
+
+  <div class="hero-actions">
+    <a href="https://sthapit-one.vercel.app/auth" class="btn-white">
+      Start Free Trial
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+    </a>
+    <a href="#features" class="btn-outline-white">
+      See all features
+    </a>
+  </div>
+
+  <!-- MOCKUP -->
+  <div class="hero-mockup">
+    <div class="desktop-card">
+      <div class="dc-dots">
+        <div class="dc-dot" style="background:#FF5F57;"></div>
+        <div class="dc-dot" style="background:#FFBD2E;"></div>
+        <div class="dc-dot" style="background:#28C840;"></div>
+        <div class="dc-offline-badge" style="margin-left:auto;">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="1" y1="1" x2="23" y2="23"/><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55M5 12.55a10.94 10.94 0 0 1 5.17-2.39M10.71 5.05A16 16 0 0 1 22.56 9M1.42 9a15.91 15.91 0 0 1 4.7-2.88M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01"/></svg>
+          Offline Mode
+        </div>
+      </div>
+      <div class="dc-bill-row"><span class="name">Masala Chai × 2</span><span class="price">₹60</span></div>
+      <div class="dc-bill-row"><span class="name">Veg Sandwich</span><span class="price">₹120</span></div>
+      <div class="dc-bill-row"><span class="name">Cold Coffee</span><span class="price">₹80</span></div>
+      <div class="dc-total-section">
+        <div class="dc-total-row"><span>Subtotal</span><span>₹260</span></div>
+        <div class="dc-total-row"><span>GST (5%)</span><span>₹13</span></div>
+        <div class="dc-grand"><span>Total</span><span class="val">₹273</span></div>
+        <button class="dc-btn">Generate Bill →</button>
+      </div>
+    </div>
+
+    <div class="phone-card">
+      <div class="ph-notch"></div>
+      <div class="ph-header">CHAI HOUSE · T7</div>
+      <div class="ph-sync-badge">
+        <div class="ph-sync-dot"></div>
+        Syncing to cloud…
+      </div>
+      <div class="ph-items">
+        <div class="ph-item"><span class="ph-item-name">2× Paneer Tikka</span><span class="ph-item-price">₹360</span></div>
+        <div class="ph-item"><span class="ph-item-name">1× Naan</span><span class="ph-item-price">₹40</span></div>
+        <div class="ph-item"><span class="ph-item-name">1× Lassi</span><span class="ph-item-price">₹60</span></div>
+      </div>
+      <div class="ph-cta">₹460 · KOT Sent ✓</div>
+    </div>
+  </div>
+</section>
+
+<!-- TRUST STRIP -->
+<div class="trust-strip">
+  <div class="trust-item"><div class="trust-dot"></div> Works 100% offline</div>
+  <div class="trust-item"><div class="trust-dot" style="background:#52B788;"></div> Auto cloud backup</div>
+  <div class="trust-item"><div class="trust-dot"></div> GST-compliant billing</div>
+  <div class="trust-item"><div class="trust-dot" style="background:#52B788;"></div> UPI QR per order</div>
+  <div class="trust-item"><div class="trust-dot"></div> WhatsApp receipts</div>
+  <div class="trust-item"><div class="trust-dot" style="background:#52B788;"></div> Mobile + Desktop</div>
+</div>
+
+<!-- STATS -->
+<div class="stats-strip">
+  <div class="stat-item"><div class="stat-num">₹0</div><div class="stat-label">Per-transaction fee</div></div>
+  <div class="stat-item"><div class="stat-num">0s</div><div class="stat-label">Offline startup time</div></div>
+  <div class="stat-item"><div class="stat-num">3-in-1</div><div class="stat-label">Print · WhatsApp · UPI QR</div></div>
+  <div class="stat-item"><div class="stat-num">6+</div><div class="stat-label">Business types</div></div>
+</div>
+
+<!-- FEATURES -->
+<section class="section centered" id="features" style="background: var(--cream);">
+  <span class="section-tag reveal">What Sthappit Does</span>
+  <h2 class="section-title reveal">Everything your<br/><em>kitchen needs</em></h2>
+  <p class="section-body reveal" style="margin-bottom:48px;">From a single tea stall to a multi-table restaurant — Sthappit handles it all, online or offline.</p>
+
+  <div class="features-grid">
+    <div class="feature-card reveal"><div class="feature-icon">⚡</div><div class="feature-title">Offline-First POS</div><div class="feature-body">Bill customers without internet. Every order, every item — stored locally and synced to cloud when connection returns.</div></div>
+    <div class="feature-card reveal reveal-d1"><div class="feature-icon">☁️</div><div class="feature-title">Automatic Cloud Backup</div><div class="feature-body">All data backed up to the cloud the moment internet is detected. Never lose a single order, even after device failure.</div></div>
+    <div class="feature-card reveal reveal-d2"><div class="feature-icon">🧾</div><div class="feature-title">GST-Compliant Billing</div><div class="feature-body">Correct tax on every bill. GST calculated after discount, stored in paise — zero float drift, 100% accurate.</div></div>
+    <div class="feature-card reveal"><div class="feature-icon">📱</div><div class="feature-title">Mobile + Desktop</div><div class="feature-body">Compact card layout on phones, two-panel POS on desktop. Works perfectly on any screen, any device.</div></div>
+    <div class="feature-card reveal reveal-d1"><div class="feature-icon">🍽️</div><div class="feature-title">Table Management</div><div class="feature-body">Hold orders to tables, track open tabs, manage multiple bills at once. KOT to kitchen in one tap.</div></div>
+    <div class="feature-card reveal reveal-d2"><div class="feature-icon">📦</div><div class="feature-title">Stock & Inventory</div><div class="feature-body">Track raw materials and finished goods. Low-stock alerts. Know your cost price vs. selling price always.</div></div>
+    <div class="feature-card reveal"><div class="feature-icon">💳</div><div class="feature-title">Flexible Payments</div><div class="feature-body">Cash, UPI, or split payments. Dynamic UPI QR generated per exact order total. Change calculator built-in.</div></div>
+    <div class="feature-card reveal reveal-d1"><div class="feature-icon">🎛️</div><div class="feature-title">Add-ons & Variants</div><div class="feature-body">Sizes, portions, toppings — configure menu items exactly how your kitchen works. Fast-add items supported.</div></div>
+    <div class="feature-card reveal reveal-d2"><div class="feature-icon">📊</div><div class="feature-title">Sales & Stats</div><div class="feature-body">Daily sales, top-selling items, revenue breakdown. Make smarter decisions with real-time analytics.</div></div>
+  </div>
+</section>
+
+<!-- ⭐ CLOUD BACKUP SECTION -->
+<section class="backup-section" id="backup">
+  <div class="backup-inner">
+
+    <div class="backup-text reveal">
+      <span class="section-tag">Cloud Backup</span>
+      <h2 class="section-title">Your data is always<br/><em>safe & backed up</em></h2>
+      <p class="section-body">Work offline all day. The moment your internet is back, Sthappit quietly backs up every order, every item, every bill — automatically. No manual exports. No lost data.</p>
+
+      <div class="backup-checks">
+        <div class="backup-check">
+          <div class="check-icon">☁️</div>
+          <div class="check-text"><strong>Offline → stores locally.</strong> Every bill saved to your device instantly, even with no internet.</div>
+        </div>
+        <div class="backup-check">
+          <div class="check-icon">🔄</div>
+          <div class="check-text"><strong>Internet detected → auto-sync.</strong> Background sync kicks in the moment connection is restored.</div>
+        </div>
+        <div class="backup-check">
+          <div class="check-icon">🔒</div>
+          <div class="check-text"><strong>Your data, only yours.</strong> Row-level security ensures no other business can see your orders or menu.</div>
+        </div>
+        <div class="backup-check">
+          <div class="check-icon">📲</div>
+          <div class="check-text"><strong>Access anywhere.</strong> Log in from any device — phone, tablet, desktop — and your data is there.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="backup-visual reveal reveal-d1">
+      <div class="sync-diagram">
+        <div style="font-size:12px; font-weight:700; color:rgba(255,255,255,0.35); letter-spacing:0.1em; text-transform:uppercase; margin-bottom:20px;">Live Sync Flow</div>
+
+        <div class="offline-card">
+          <div class="offline-card-icon" style="background:rgba(255,87,87,0.1);">📵</div>
+          <div>
+            <div class="offline-card-title">Internet goes down</div>
+            <div class="offline-card-body">Sthappit continues billing normally. All orders saved locally via IndexedDB. Zero disruption to your business.</div>
+          </div>
+        </div>
+
+        <div class="offline-card">
+          <div class="offline-card-icon" style="background:rgba(255,193,7,0.1);">🔁</div>
+          <div>
+            <div class="offline-card-title">Internet restored</div>
+            <div class="offline-card-body">Sthappit detects connection and begins syncing all pending orders to the cloud automatically, in the background.</div>
+          </div>
+        </div>
+
+        <div class="sync-status">
+          <div class="sync-status-left">
+            <div class="sync-pulse"></div>
+            <div>
+              <div class="sync-status-text">All data backed up</div>
+              <div class="sync-status-sub">23 orders · 4 menu updates synced</div>
+            </div>
+          </div>
+          <div class="sync-status-time">just now</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- OFFLINE SECTION -->
+<section class="offline-section-wrap">
+  <div class="offline-inner">
+    <div class="offline-text reveal">
+      <span class="section-tag">Offline-First</span>
+      <h2 class="section-title">No internet?<br/><em>No problem.</em></h2>
+      <p class="section-body">Indian internet can be unpredictable. Sthappit is built for it — runs entirely on-device, syncs when ready.</p>
+      <div style="margin-bottom:32px;">
+        <div class="offline-check"><span class="offline-check-icon">●</span><span class="offline-check-text">IndexedDB stores everything locally</span></div>
+        <div class="offline-check"><span class="offline-check-icon">●</span><span class="offline-check-text">Service Worker PWA — installs on home screen</span></div>
+        <div class="offline-check"><span class="offline-check-icon">●</span><span class="offline-check-text">Works on 2G, slow connections, or no data</span></div>
+        <div class="offline-check"><span class="offline-check-icon">●</span><span class="offline-check-text">Automatic conflict-free merge on sync</span></div>
+      </div>
+      <a href="https://sthapit-one.vercel.app/auth" class="btn-white" style="display:inline-flex;">Start for free →</a>
+    </div>
+    <div class="offline-visual reveal reveal-d1">
+      <div style="font-family:'Syne',sans-serif; font-weight:800; font-size:18px; color:white; margin-bottom:6px;">Always on. Always ready.</div>
+      <div style="font-size:13px; color:rgba(255,255,255,0.35); margin-bottom:20px;">Powered by IndexedDB · Supabase cloud sync</div>
+      <div class="offline-chips">
+        <div class="offline-chip"><div class="chip-dot green"></div> Local-first storage</div>
+        <div class="offline-chip"><div class="chip-dot green"></div> Auto cloud sync</div>
+        <div class="offline-chip"><div class="chip-dot"></div> PWA — install anywhere</div>
+        <div class="offline-chip"><div class="chip-dot green"></div> Zero data loss</div>
+        <div class="offline-chip"><div class="chip-dot green"></div> Works on 2G</div>
+        <div class="offline-chip"><div class="chip-dot"></div> Multi-device access</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section class="section centered" id="how" style="background: var(--sand);">
+  <span class="section-tag reveal">Get Started Fast</span>
+  <h2 class="section-title reveal">Up and billing in <em>4 steps</em></h2>
+  <div class="steps-grid">
+    <div class="step-card reveal"><div class="step-num">01</div><div class="step-title">Create Account</div><div class="step-body">Simple username + password. No OTP, no complex forms. Running in 30 seconds.</div></div>
+    <div class="step-card reveal reveal-d1"><div class="step-num">02</div><div class="step-title">Set Up Business</div><div class="step-body">Choose your type — café, restaurant, food truck. Configure GST, UPI ID, and tables.</div></div>
+    <div class="step-card reveal reveal-d2"><div class="step-num">03</div><div class="step-title">Add Your Menu</div><div class="step-body">Add categories, items, prices, veg/non-veg, add-ons. Ready-made templates available.</div></div>
+    <div class="step-card reveal reveal-d3"><div class="step-num">04</div><div class="step-title">Start Billing</div><div class="step-body">Tap items, checkout via UPI or cash. WhatsApp receipt or thermal print — your choice.</div></div>
+  </div>
+</section>
+
+<!-- BUSINESS TYPES -->
+<section class="section centered" style="background: white;">
+  <span class="section-tag reveal">Business Types</span>
+  <h2 class="section-title reveal">Works for every<br/><em>kind of F&B</em></h2>
+  <div class="business-grid">
+    <div class="biz-card reveal"><div class="biz-emoji">☕</div><div class="biz-name">Café</div><div class="biz-desc">Quick billing, fast add, loyalty items</div></div>
+    <div class="biz-card reveal reveal-d1"><div class="biz-emoji">🍛</div><div class="biz-name">Restaurant</div><div class="biz-desc">Table management, KOT, multi-course</div></div>
+    <div class="biz-card reveal reveal-d2"><div class="biz-emoji">🚚</div><div class="biz-name">Food Truck</div><div class="biz-desc">Portable takeaway mode, any device</div></div>
+    <div class="biz-card reveal"><div class="biz-emoji">🏪</div><div class="biz-name">Kiosk</div><div class="biz-desc">Compact card layout, instant QR pay</div></div>
+    <div class="biz-card reveal reveal-d1"><div class="biz-emoji">🥐</div><div class="biz-name">Bakery</div><div class="biz-desc">Finished goods, shelf-life tracking</div></div>
+    <div class="biz-card reveal reveal-d2"><div class="biz-emoji">🏬</div><div class="biz-name">Franchise</div><div class="biz-desc">Isolated per-outlet data, owner roles</div></div>
+  </div>
+</section>
+
+<!-- RECEIPTS -->
+<section class="section centered" style="background: #FEF6EE;">
+  <span class="section-tag reveal">Send Bills Your Way</span>
+  <h2 class="section-title reveal">3 ways to share<br/><em>every receipt</em></h2>
+  <p class="section-body reveal" style="margin-bottom:0;">After every checkout, choose how you send the receipt. No extra apps.</p>
+  <div class="receipt-cards">
+    <div class="receipt-card reveal">
+      <div class="receipt-icon">🖨️</div>
+      <div class="receipt-name">Thermal Print</div>
+      <div class="receipt-desc">80mm receipt layout. One tap opens browser print for any thermal printer.</div>
+      <ul class="receipt-features">
+        <li>58mm & 80mm roll support</li>
+        <li>Custom header & footer</li>
+        <li>Auto-cut compatible</li>
+      </ul>
+    </div>
+    <div class="receipt-card reveal reveal-d1">
+      <div class="receipt-icon">💬</div>
+      <div class="receipt-name">WhatsApp Bill</div>
+      <div class="receipt-desc">Pre-filled itemised bill opens in WhatsApp. Customer gets it in seconds.</div>
+      <ul class="receipt-features">
+        <li>Instant delivery</li>
+        <li>Full itemised format</li>
+        <li>No extra app needed</li>
+      </ul>
+    </div>
+    <div class="receipt-card reveal reveal-d2">
+      <div class="receipt-icon">📲</div>
+      <div class="receipt-name">UPI QR Code</div>
+      <div class="receipt-desc">Dynamic QR generated per order total. Customer scans with any UPI app.</div>
+      <ul class="receipt-features">
+        <li>Works with any UPI app</li>
+        <li>Exact amount pre-filled</li>
+        <li>Digital payment record</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section class="cta-section" id="get-started">
+  <h2 class="reveal">Set up your business.<br/><em>Today.</em></h2>
+  <p class="cta-sub reveal">Join cafés, restaurants, and food trucks who bill smarter with Sthappit.</p>
+  <a href="https://sthapit-one.vercel.app/auth" class="btn-white reveal" style="font-size:16px; padding:16px 36px;">
+    🚀 Start Free Trial
+  </a>
+  <div class="cta-checks reveal">
+    <div class="cta-check">✓ No credit card needed</div>
+    <div class="cta-check">✓ Works offline instantly</div>
+    <div class="cta-check">✓ Setup in minutes</div>
+    <div class="cta-check">✓ Data backed up automatically</div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div>
+    <div class="footer-logo">Sthap<span>pit</span></div>
+    <div class="footer-tagline">Smart POS for Indian F&B · sthappit.com · Made in India 🇮🇳</div>
+  </div>
+  <div class="footer-links">
+    <a href="#features" class="footer-link">Features</a>
+    <a href="#backup" class="footer-link">Cloud Backup</a>
+    <a href="#how" class="footer-link">How it works</a>
+    <a href="#get-started" class="footer-link">Get Started</a>
+  </div>
+  <div class="footer-copy">© 2025 Sthappit. All rights reserved.</div>
+</footer>
+
+<script>
+// Scroll reveal
+const io = new IntersectionObserver((entries) => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      e.target.classList.add('visible');
+      io.unobserve(e.target);
+    }
+  });
+}, { threshold: 0.08, rootMargin: '0px 0px -40px 0px' });
+document.querySelectorAll('.reveal').forEach(el => io.observe(el));
+
+// Nav shadow on scroll
+window.addEventListener('scroll', () => {
+  document.getElementById('navbar').style.boxShadow =
+    window.scrollY > 40 ? '0 2px 24px rgba(26,18,8,0.08)' : 'none';
+}, { passive: true });
+</script>
+</body>
+</html>
