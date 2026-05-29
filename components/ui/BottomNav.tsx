@@ -7,14 +7,15 @@ import {
   Settings,
   Package,
   LayoutDashboard,
+  LayoutGrid,
 } from "lucide-react";
 import { useApp } from "@/lib/store/AppContext";
 
 const TABS = [
   { href: "/dashboard", label: "Home",     Icon: LayoutDashboard },
-  { href: "/pos",       label: "Register", Icon: ShoppingCart    },
+  { href: "/pos",       label: "POS",      Icon: ShoppingCart    },
+  { href: "/tables",    label: "Tables",   Icon: LayoutGrid      },
   { href: "/orders",    label: "Orders",   Icon: ClipboardList   },
-  { href: "/stock",     label: "Stock",    Icon: Package         },
   { href: "/settings",  label: "Settings", Icon: Settings        },
 ];
 
@@ -35,7 +36,7 @@ export default function BottomNav() {
     >
       <div className="flex">
         {TABS.map(({ href, label, Icon }) => {
-          const active = pathname.startsWith(href);
+          const active = pathname === href || pathname.startsWith(href + "/");
           return (
             <Link
               key={href}
