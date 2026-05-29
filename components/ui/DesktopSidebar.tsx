@@ -6,20 +6,19 @@ import {
   ClipboardList,
   Settings,
   LogOut,
-  Package,
   LayoutDashboard,
+  LayoutGrid,
 } from "lucide-react";
 import { useApp } from "@/lib/store/AppContext";
 
 const NAV = [
   { href: "/dashboard", label: "Dashboard", Icon: LayoutDashboard },
-  { href: "/pos",       label: "Register",  Icon: ShoppingCart    },
+  { href: "/pos",       label: "POS",       Icon: ShoppingCart    },
+  { href: "/tables",    label: "Tables",    Icon: LayoutGrid      },
   { href: "/orders",    label: "Orders",    Icon: ClipboardList   },
-  { href: "/stock",     label: "Stock",     Icon: Package         },
   { href: "/settings",  label: "Settings",  Icon: Settings        },
 ];
 
-// S1 logomark — matches spec: Syne 800, white, #E8590C square, border-radius 11px, 38×38px
 function S1Logo() {
   return (
     <div
@@ -67,7 +66,6 @@ export default function DesktopSidebar() {
       className="hidden lg:flex flex-col shrink-0"
       style={{ width: 220, background: "#1A1208", height: "100dvh" }}
     >
-      {/* Logo + biz name */}
       <div
         style={{
           padding: "24px 20px",
@@ -106,7 +104,6 @@ export default function DesktopSidebar() {
         </div>
       </div>
 
-      {/* Biz name */}
       <div style={{ padding: "12px 20px", borderBottom: "0.5px solid rgba(255,255,255,0.05)" }}>
         <p
           style={{
@@ -135,10 +132,9 @@ export default function DesktopSidebar() {
         </p>
       </div>
 
-      {/* Nav links */}
       <nav style={{ flex: 1, padding: "12px 0", overflowY: "auto" }}>
         {NAV.map(({ href, label, Icon }) => {
-          const active = pathname.startsWith(href);
+          const active = pathname === href || pathname.startsWith(href + "/");
           return (
             <Link
               key={href}
@@ -169,7 +165,6 @@ export default function DesktopSidebar() {
         })}
       </nav>
 
-      {/* Sync pip */}
       <div
         style={{
           padding: "8px 20px",
@@ -201,7 +196,6 @@ export default function DesktopSidebar() {
         </span>
       </div>
 
-      {/* User footer */}
       <div
         style={{
           padding: "16px 20px",
