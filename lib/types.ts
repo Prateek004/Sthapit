@@ -4,6 +4,7 @@ export type BusinessType = "cafe" | "restaurant" | "food_truck" | "kiosk" | "bak
 export type UserRole = "owner" | "cashier";
 export type ServiceMode = "dine_in" | "takeaway" | "delivery";
 export type PaymentMethod = "cash" | "upi" | "split";
+export type TableStatus = "AVAILABLE" | "OCCUPIED";
 
 export interface StockSettings {
   tablesEnabled: boolean;
@@ -127,10 +128,53 @@ export interface Order {
   syncStatus: "pending" | "synced" | "failed";
 }
 
+// Legacy — kept for backward compat with existing Dexie store
 export interface OpenTable {
   id: string;
   tableNumber: number;
   items: CartItem[];
   openedAt: string;
+  updatedAt: string;
+}
+
+// ── New first-class TableOrder for /tables module ─────────────────────────────
+export interface TableOrderItem {
+  cartId: string;
+  menuItemId: string;
+  name: string;
+  unitPricePaise: number;
+  qty: number;
+  selectedSize?: string;
+  selectedPortion?: string;
+  selectedAddOns: AddOn[];
+  notes?: string;
+}
+
+export interface TableOrder {
+  /** Stable ID = "table_<tableId>" so upsert is idempotent */
+  id: string;
+  tableId: string;
+  tableName: string;
+  tableNumber: number;
+  status: TableStatus;
+  items: TableOrderItem[];
+  subtotalPaise: number;
+  taxPaise: number;
+  discountPaise: number;
+  totalPaise: number;
+  heldAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  /** For optimistic concurrency — increment on every write */
+  version: number;
+  syncStatus: "pending" | "synced" | "failed";
+}
+
+export interface RestaurantTable {
+  id: string;
+  name: string;
+  tableNumber: number;
+  status: TableStatus;
+  activeOrderId: string | null;
   updatedAt: string;
 }
