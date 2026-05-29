@@ -20,6 +20,7 @@ import type {
 import { calcDiscount, calcGST, generateBillNumber } from "@/lib/utils";
 import { MENU_TEMPLATES } from "@/lib/utils/menuTemplates";
 import { getSupabase, isSupabaseEnabled } from "@/lib/supabase/client";
+import { TableStoreProvider } from "@/lib/store/tableStore";
 
 export interface Toast {
   id: string;
@@ -55,12 +56,10 @@ const initialState: AppState = {
   activeStockTab: "menu",
 };
 
-// ── Storage keys — rebranded ──────────────────────────────────────────────────
 const SESSION_KEY = "sth1r_session";
 const CART_KEY    = "sth1r_cart";
 const UI_KEY      = "sth1r_ui";
 
-// Migrate old vynn_ keys to sth1r_ keys once
 function migrateLocalStorageKeys(): void {
   try {
     const oldKeys: Record<string, string> = {
@@ -69,7 +68,7 @@ function migrateLocalStorageKeys(): void {
       vynn_ui:      UI_KEY,
     };
     for (const [oldKey, newKey] of Object.entries(oldKeys)) {
-      if (localStorage.getItem(newKey)) continue; // already migrated
+      if (localStorage.getItem(newKey)) continue;
       const val = localStorage.getItem(oldKey);
       if (val) {
         localStorage.setItem(newKey, val);
@@ -442,6 +441,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         import("@/lib/supabase/sync")
           .then(({ backgroundSync }) => backgroundSync(session.userId))
           .catch(() => {});
+
+        // Restore table orders from Supabase
+        import("@/lib/supabase/tableSync")
+          .then(({ restoreTableOrdersFromSupabase }) =>
+            restoreTableOrdersFromSupabase(session.userId)
+          )
+          .catch(() => {});
       } catch {
         dispatch({
           type: "INIT_DONE",
@@ -492,6 +498,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       saveSession(restoredSession);
       import("@/lib/supabase/sync")
         .then(({ backgroundSync }) => backgroundSync(restoredSession.userId))
+        .catch(() => {});
+      import("@/lib/supabase/tableSync")
+        .then(({ restoreTableOrdersFromSupabase }) =>
+          restoreTableOrdersFromSupabase(restoredSession.userId)
+        )
         .catch(() => {});
     } catch {
       dispatch({
@@ -617,7 +628,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       dispatch({ type: "ORDER_ADD", payload: order });
       dispatch({ type: "CART_CLEAR" });
 
-      // Fire-and-forget sync — never blocks the UI
       import("@/lib/supabase/sync")
         .then(({ syncOrder }) => syncOrder(order))
         .catch(() => {});
@@ -781,7 +791,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setActiveStockTab,
       }}
     >
-      {children}
+      <TableStoreProvider session={state.session}>
+        {children}
+      </TableStoreProvider>
     </AppContext.Provider>
   );
 }
