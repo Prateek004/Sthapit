@@ -1,324 +1,639 @@
 "use client";
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useRef } from "react";
+import Modal from "@/components/ui/Modal";
 import { useApp } from "@/lib/store/AppContext";
-import { fmtRupee, calcDiscount, calcGST } from "@/lib/utils";
+import type { PaymentMethod, Order } from "@/lib/types";
+import { fmtRupee, fmtDate, toP, QUICK_CASH } from "@/lib/utils";
+import { printKot } from "@/components/pos/CartPanel";
 import {
-  Minus,
-  Plus,
-  Trash2,
-  Tag,
-  UtensilsCrossed,
-  ShoppingBag,
-  Bike,
-  LayoutGrid,
-  BookmarkCheck,
+  CheckCircle2,
+  Banknote,
+  Smartphone,
+  Printer,
+  MessageCircle,
+  QrCode,
+  X,
+  Loader2,
   ClipboardList,
 } from "lucide-react";
-import CheckoutModal from "./CheckoutModal";
-import type { ServiceMode } from "@/lib/types";
-import { useTableStore, useAllTableOrders } from "@/lib/store/tableStore";
 
-const SERVICE_MODES: {
-  mode: ServiceMode;
+interface Props {
+  open: boolean;
+  onClose: () => void;
+  totalPaise: number;
+  subtotalPaise: number;
+  discountPaise: number;
+  gstPaise: number;
+  gstPercent: number;
+  discountType: "flat" | "percent";
+  discountValue: number;
+}
+
+const PAY_METHODS: {
+  id: PaymentMethod;
   label: string;
   Icon: React.ElementType;
 }[] = [
-  { mode: "dine_in", label: "Dine-in", Icon: UtensilsCrossed },
-  { mode: "takeaway", label: "Takeaway", Icon: ShoppingBag },
-  { mode: "delivery", label: "Delivery", Icon: Bike },
+  { id: "cash", label: "Cash", Icon: Banknote },
+  { id: "upi", label: "UPI", Icon: Smartphone },
+  { id: "split", label: "Split", Icon: Banknote },
 ];
 
-// ── Shared KOT print helper ───────────────────────────────────────────────────
-// Exported so CheckoutModal can use the same logic without duplication.
-export function printKot(params: {
-  billNumber: string;
-  tableNumber?: number;
-  serviceMode: string;
-  items: Array<{
-    qty: number;
-    name: string;
-    selectedPortion?: string;
-    selectedAddOns: Array<{ name: string }>;
-    notes?: string;
-  }>;
-  businessName?: string;
-}): void {
-  const { billNumber, tableNumber, serviceMode, items, businessName } = params;
-  const tableInfo = tableNumber
-    ? `Table: ${tableNumber}`
-    : serviceMode.replace("_", " ").toUpperCase();
-  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>KOT #${billNumber}</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Courier New',monospace;font-size:13px;width:80mm;padding:4mm}.c{text-align:center}.b{font-weight:bold;font-size:15px}hr{border:none;border-top:2px dashed #000;margin:4px 0}.item{font-size:14px;margin:4px 0}</style></head><body>
-    <div class="c b">KITCHEN ORDER${businessName ? " — " + businessName : ""}</div>
-    <hr/>
-    <div class="c">${tableInfo} · #${billNumber}</div>
-    <div class="c">${new Date().toLocaleTimeString("en-IN", {
-      hour: "2-digit",
-      minute: "2-digit",
-    })}</div>
-    <hr/>
-    ${items
-      .map(
-        (i) =>
-          `<div class="item">${i.qty}x ${i.name}${
-            i.selectedPortion ? ` (${i.selectedPortion})` : ""
-          }${
-            i.selectedAddOns.length
-              ? ` + ${i.selectedAddOns.map((a) => a.name).join(", ")}`
-              : ""
-          }${
-            i.notes
-              ? `<br/><em style="font-size:11px">-> ${i.notes}</em>`
-              : ""
-          }</div>`
-      )
-      .join("")}
-    <hr/>
-    </body></html>`;
-  const w = window.open("", "_blank", "width=300,height=400");
-  if (!w) {
-    alert("Allow popups to print KOT");
-    return;
-  }
-  w.document.write(html);
-  w.document.close();
-  w.focus();
-  setTimeout(() => {
-    w.print();
-    w.close();
-  }, 300);
-}
+type PostTab = "kot" | "invoice" | "whatsapp";
 
-interface Props {
-  onClose?: () => void;
-}
+export default function CheckoutModal({
+  open,
+  onClose,
+  totalPaise,
+  subtotalPaise,
+  discountPaise,
+  gstPaise,
+  gstPercent,
+  discountType,
+  discountValue,
+}: Props) {
+  const { state, placeOrder, showToast } = useApp();
+  const { session, cart, serviceMode, tableNumber } = state;
 
-export default function CartPanel({ onClose }: Props) {
-  const {
-    state,
-    updateCartQty,
-    removeFromCart,
-    clearCart,
-    setServiceMode,
-    setTableNumber,
-    holdToTable,
-    showToast,
-  } = useApp();
-  const { cart, session, serviceMode, tableNumber } = state;
-  const { addCartItems } = useTableStore();
-  const allTableOrders = useAllTableOrders();
+  const kotEnabled = session?.stockSettings?.kotEnabled ?? false;
+  const hasUpi = Boolean(session?.upiId);
 
-  const ss = session?.stockSettings;
-  const tablesEnabled = ss?.tablesEnabled ?? false;
-  const tableCount = ss?.tableCount ?? 10;
-  const openTableBilling = ss?.openTableBilling ?? false;
-  const kotEnabled = ss?.kotEnabled ?? false;
+  const [method, setMethod] = useState<PaymentMethod>("cash");
+  const [cashInput, setCashInput] = useState("");
+  const [splitCash, setSplitCash] = useState("");
+  const [splitUpi, setSplitUpi] = useState("");
+  const [upiConfirmed, setUpiConfirmed] = useState(false);
+  const [placing, setPlacing] = useState(false);
+  const [order, setOrder] = useState<Order | null>(null);
+  const [postTab, setPostTab] = useState<PostTab>("invoice");
+  const [qrSrc, setQrSrc] = useState("");
+  const [qrLoading, setQrLoading] = useState(false);
+  const [showUpiQr, setShowUpiQr] = useState(false);
+  const [kotFired, setKotFired] = useState(false);
+  const invoiceRef = useRef<HTMLDivElement>(null);
 
-  const [discountType, setDiscountType] = useState<"flat" | "percent">("flat");
-  const [discountInput, setDiscountInput] = useState("");
-  const [showCheckout, setShowCheckout] = useState(false);
-  const [showTablePicker, setShowTablePicker] = useState(false);
-  const [holding, setHolding] = useState(false);
-
+  // Reset all state whenever modal opens
   useEffect(() => {
-    if (cart.length === 0) setDiscountInput("");
-  }, [cart.length]);
+    if (open) {
+      setMethod("cash");
+      setCashInput("");
+      setSplitCash("");
+      setSplitUpi("");
+      setUpiConfirmed(false);
+      setPlacing(false);
+      setOrder(null);
+      setQrSrc("");
+      setShowUpiQr(false);
+      setKotFired(false);
+      setPostTab(kotEnabled ? "kot" : "invoice");
+    }
+  }, [open, kotEnabled]);
 
-  const subtotalPaise = cart.reduce((sum, item) => {
-    const ao = item.selectedAddOns.reduce((s, a) => s + a.pricePaise, 0);
-    return sum + (item.unitPricePaise + ao) * item.qty;
-  }, 0);
+  // UPI QR generation
+  useEffect(() => {
+    if (!showUpiQr || !hasUpi) return;
+    const amount = (totalPaise / 100).toFixed(2);
+    const upiId = session?.upiId ?? "";
+    const name = encodeURIComponent(session?.businessName ?? "Sth1r");
+    const upiStr = `upi://pay?pa=${upiId}&pn=${name}&am=${amount}&cu=INR`;
+    const api = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(upiStr)}`;
+    setQrSrc("");
+    setQrLoading(true);
+    let cancelled = false;
+    const img = new Image();
+    img.onload = () => {
+      if (!cancelled) {
+        setQrSrc(api);
+        setQrLoading(false);
+      }
+    };
+    img.onerror = () => {
+      if (!cancelled) setQrLoading(false);
+    };
+    img.src = api;
+    return () => {
+      cancelled = true;
+      img.onload = null;
+      img.onerror = null;
+    };
+  }, [showUpiQr, hasUpi, totalPaise, session]);
 
-  const discountValue = parseFloat(discountInput) || 0;
-  const discountPaise = calcDiscount(subtotalPaise, discountType, discountValue);
-  const afterDiscount = Math.max(0, subtotalPaise - discountPaise);
-  const gstPercent = session?.gstPercent ?? 0;
-  const gstPaise = calcGST(afterDiscount, gstPercent);
-  const totalPaise = afterDiscount + gstPaise;
-  const itemCount = cart.reduce((s, i) => s + i.qty, 0);
-  const discountCapped = discountPaise >= subtotalPaise && discountValue > 0;
+  const cashPaise = toP(Number(cashInput) || 0);
+  const changePaise = Math.max(0, cashPaise - totalPaise);
+  const splitCashP = toP(Number(splitCash) || 0);
+  const splitUpiP = toP(Number(splitUpi) || 0);
+  const splitTotal = splitCashP + splitUpiP;
+  const splitOk = splitTotal >= totalPaise;
 
-  // ── Clear cart with confirmation dialog ──────────────────────────────────
-  const handleClearAll = useCallback(() => {
-    if (cart.length === 0) return;
-    if (
-      !window.confirm(
-        `Clear all ${itemCount} item${itemCount > 1 ? "s" : ""} from cart?`
-      )
-    )
-      return;
-    clearCart();
-    setDiscountInput("");
-  }, [cart.length, itemCount, clearCart]);
+  const canConfirm =
+    !placing &&
+    ((method === "upi" && upiConfirmed) ||
+      (method === "cash" && cashInput !== "" && cashPaise >= totalPaise) ||
+      (method === "split" && splitOk));
 
-  // ── Hold to table — writes into the shared table order (same one the
-  //    Tables tab shows), fires KOT immediately if kotEnabled ─────────────
-  const handleHold = async () => {
-    if (!tableNumber) {
-      showToast("Select a table first", "error");
+  // ── Fire KOT before payment ─────────────────────────────────────────────
+  const handleFireKot = () => {
+    const kotRef = `KOT${tableNumber ? `-T${tableNumber}` : ""}-${Date.now()
+      .toString()
+      .slice(-6)}`;
+    printKot({
+      billNumber: kotRef,
+      tableNumber,
+      serviceMode,
+      items: cart,
+      businessName: session?.businessName,
+    });
+    setKotFired(true);
+    showToast("KOT sent to kitchen ✓");
+  };
+
+  const handleConfirm = async () => {
+    if (!canConfirm) {
+      if (method === "cash" && cashInput === "")
+        showToast("Enter cash received", "error");
+      else if (method === "cash" && cashPaise < totalPaise)
+        showToast(`Short by ${fmtRupee(totalPaise - cashPaise)}`, "error");
+      else if (method === "split" && !splitOk)
+        showToast(
+          `Split short by ${fmtRupee(totalPaise - splitTotal)}`,
+          "error"
+        );
+      else if (method === "upi" && !upiConfirmed)
+        showToast("Confirm UPI received first", "error");
       return;
     }
-    if (cart.length === 0) return;
-    setHolding(true);
+    setPlacing(true);
     try {
-      const tableId = `t${tableNumber}`;
-      const tableName = `Table ${tableNumber}`;
-      const heldItems = [...cart];
-      await addCartItems(tableId, tableName, tableNumber, heldItems);
-      clearCart();
-      if (kotEnabled) {
-        const kotRef = `KOT-T${tableNumber}-${Date.now().toString().slice(-6)}`;
-        printKot({
-          billNumber: kotRef,
-          tableNumber,
-          serviceMode: "dine_in",
-          items: heldItems,
-          businessName: session?.businessName,
-        });
-        showToast(`Table ${tableNumber} held — KOT fired to kitchen ✓`);
-      } else {
-        showToast(`Cart held on Table ${tableNumber} ✓`);
-      }
-      setTableNumber(undefined);
-      onClose?.();
+      const placed = await placeOrder({
+        paymentMethod: method,
+        discountType,
+        discountValue,
+        cashReceivedPaise: method === "cash" ? cashPaise : undefined,
+        splitPayment:
+          method === "split"
+            ? { cashPaise: splitCashP, upiPaise: splitUpiP }
+            : undefined,
+      });
+      setOrder(placed);
+      setPostTab(kotEnabled ? "kot" : "invoice");
+      setShowUpiQr(false);
     } catch {
-      showToast("Failed to hold order", "error");
-    } finally {
-      setHolding(false);
+      showToast("Order failed. Try again.", "error");
+      setPlacing(false);
     }
   };
 
-  return (
-    <>
-      <div className="flex flex-col h-full bg-white overflow-hidden">
-        {/* ── Service mode tabs ── */}
-        <div className="flex gap-1 px-3 pt-3 pb-2 shrink-0">
-          {SERVICE_MODES.map(({ mode, label, Icon }) => (
-            <button
-              key={mode}
-              onClick={() => setServiceMode(mode)}
-              className={`flex-1 flex items-center justify-center gap-1 py-1.5 rounded-xl text-xs font-bold border transition-all press ${
-                serviceMode === mode
-                  ? "border-primary-500 bg-primary-50 text-primary-600"
-                  : "border-gray-200 text-gray-500"
+  const handlePrintInvoice = () => {
+    const el = invoiceRef.current;
+    if (!el) return;
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Invoice #${order?.billNumber}</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Courier New',monospace;font-size:12px;width:80mm;padding:4mm}.c{text-align:center}.b{font-weight:bold}.row{display:flex;justify-content:space-between}hr{border:none;border-top:1px dashed #000;margin:4px 0}</style></head><body>${el.innerHTML}</body></html>`;
+    const w = window.open("", "_blank", "width=400,height=600");
+    if (!w) {
+      showToast("Allow popups to print invoice", "error");
+      return;
+    }
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    setTimeout(() => {
+      w.print();
+      w.close();
+    }, 400);
+  };
+
+  const handlePrintKotPost = () => {
+    if (!order) return;
+    printKot({
+      billNumber: order.billNumber,
+      tableNumber: order.tableNumber,
+      serviceMode: order.serviceMode,
+      items: order.items,
+      businessName: session?.businessName,
+    });
+  };
+
+  const handleWhatsApp = () => {
+    if (!order) return;
+    const lines = [
+      `🧾 *Bill from ${session?.businessName ?? "Sth1r"}*`,
+      `Bill #: ${order.billNumber}`,
+      `Date: ${fmtDate(order.createdAt)}`,
+      ``,
+      ...order.items.map((i) => {
+        const ao = i.selectedAddOns.reduce((s, a) => s + a.pricePaise, 0);
+        return `• ${i.name} x${i.qty}  ${fmtRupee(
+          (i.unitPricePaise + ao) * i.qty
+        )}`;
+      }),
+      ``,
+      `Subtotal: ${fmtRupee(order.subtotalPaise)}`,
+      order.discountPaise > 0
+        ? `Discount: -${fmtRupee(order.discountPaise)}`
+        : null,
+      order.gstPercent > 0
+        ? `GST (${order.gstPercent}%): ${fmtRupee(order.gstPaise)}`
+        : null,
+      `*Total: ${fmtRupee(order.totalPaise)}*`,
+      `Payment: ${order.paymentMethod.toUpperCase()}`,
+      ``,
+      `Thank you! 🙏`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    window.open(
+      `https://wa.me/?text=${encodeURIComponent(lines)}`,
+      "_blank"
+    );
+  };
+
+  const handleDone = () => {
+    setOrder(null);
+    onClose();
+  };
+
+  // ── Pre-payment screen ──────────────────────────────────────────────────
+  if (!order) {
+    return (
+      <Modal open={open} onClose={onClose} title="Checkout">
+        <div className="px-5 pb-6 space-y-4 pt-1">
+
+          {/* KOT fire-before-payment banner */}
+          {kotEnabled && cart.length > 0 && (
+            <div
+              className={`rounded-2xl p-3 flex items-center gap-3 border-2 transition-colors ${
+                kotFired
+                  ? "border-green-400 bg-green-50"
+                  : "border-orange-300 bg-orange-50"
               }`}
             >
-              <Icon size={12} />
+              <ClipboardList
+                size={20}
+                className={kotFired ? "text-green-600" : "text-orange-500"}
+              />
+              <div className="flex-1">
+                <p
+                  className={`text-sm font-bold ${
+                    kotFired ? "text-green-700" : "text-orange-700"
+                  }`}
+                >
+                  {kotFired
+                    ? "KOT sent to kitchen ✓"
+                    : "Send to kitchen first?"}
+                </p>
+                <p className="text-xs text-gray-400">
+                  {kotFired
+                    ? "Kitchen is preparing the order"
+                    : "Fire KOT before or after payment"}
+                </p>
+              </div>
+              {!kotFired && (
+                <button
+                  onClick={handleFireKot}
+                  className="shrink-0 px-3 py-1.5 rounded-xl bg-orange-500 text-white text-xs font-bold press"
+                >
+                  Fire KOT
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Order summary */}
+          <div className="bg-gray-50 rounded-2xl p-4 space-y-1.5 text-sm">
+            <div className="flex justify-between text-gray-500">
+              <span>Subtotal</span>
+              <span className="font-semibold">{fmtRupee(subtotalPaise)}</span>
+            </div>
+            {discountPaise > 0 && (
+              <>
+                <div className="flex justify-between text-green-600">
+                  <span>
+                    Discount
+                    {discountType === "percent"
+                      ? ` (${discountValue}%)`
+                      : ""}
+                  </span>
+                  <span className="font-semibold">
+                    −{fmtRupee(discountPaise)}
+                  </span>
+                </div>
+                <div className="flex justify-between text-gray-400 text-xs">
+                  <span>Taxable</span>
+                  <span className="font-semibold">
+                    {fmtRupee(subtotalPaise - discountPaise)}
+                  </span>
+                </div>
+              </>
+            )}
+            {gstPercent > 0 && (
+              <div className="flex justify-between text-gray-500">
+                <span>GST ({gstPercent}%)</span>
+                <span className="font-semibold">{fmtRupee(gstPaise)}</span>
+              </div>
+            )}
+            <div className="flex justify-between text-base font-black text-gray-900 pt-2 border-t border-gray-200">
+              <span>Total</span>
+              <span className="text-primary-500">{fmtRupee(totalPaise)}</span>
+            </div>
+          </div>
+
+          {/* Payment method */}
+          <div>
+            <p className="text-sm font-bold text-gray-700 mb-2">
+              Payment Method
+            </p>
+            <div className="grid grid-cols-3 gap-2">
+              {PAY_METHODS.map(({ id, label, Icon }) => (
+                <button
+                  key={id}
+                  onClick={() => {
+                    setMethod(id);
+                    setShowUpiQr(false);
+                    setUpiConfirmed(false);
+                  }}
+                  className={`py-3 rounded-2xl border-2 flex flex-col items-center gap-1.5 transition-all press ${
+                    method === id
+                      ? "border-primary-500 bg-primary-50 text-primary-600"
+                      : "border-gray-200 text-gray-600"
+                  }`}
+                >
+                  <Icon size={20} />
+                  <span className="text-xs font-bold">{label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Cash */}
+          {method === "cash" && (
+            <div className="space-y-3">
+              <input
+                type="number"
+                autoFocus
+                min="0"
+                className={`w-full h-14 px-4 rounded-2xl border-2 outline-none text-2xl font-black transition-colors ${
+                  cashInput !== "" && cashPaise < totalPaise
+                    ? "border-red-400 bg-red-50 text-red-600"
+                    : cashInput !== "" && cashPaise >= totalPaise
+                    ? "border-green-400 bg-green-50"
+                    : "border-gray-200 focus:border-primary-500"
+                }`}
+                placeholder="Cash received (₹)"
+                value={cashInput}
+                onChange={(e) => setCashInput(e.target.value)}
+              />
+              <div className="flex gap-2 flex-wrap">
+                {QUICK_CASH.map((amt) => (
+                  <button
+                    key={amt}
+                    onClick={() => setCashInput(String(amt))}
+                    className={`px-3 py-1.5 rounded-xl border font-bold text-sm press ${
+                      Number(cashInput) === amt
+                        ? "border-primary-500 bg-primary-50 text-primary-600"
+                        : "border-gray-200 text-gray-600 bg-white"
+                    }`}
+                  >
+                    ₹{amt}
+                  </button>
+                ))}
+                <button
+                  onClick={() => setCashInput(String(totalPaise / 100))}
+                  className="px-3 py-1.5 rounded-xl border border-primary-300 font-bold text-sm text-primary-600 bg-primary-50 press"
+                >
+                  Exact
+                </button>
+              </div>
+              {cashInput !== "" && (
+                <div
+                  className={`rounded-xl py-3 text-center font-bold text-sm ${
+                    cashPaise >= totalPaise
+                      ? "bg-green-50 text-green-700"
+                      : "bg-red-50 text-red-600"
+                  }`}
+                >
+                  {cashPaise >= totalPaise
+                    ? `Change to return: ${fmtRupee(changePaise)}`
+                    : `Short by ${fmtRupee(totalPaise - cashPaise)}`}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* UPI */}
+          {method === "upi" && (
+            <div className="space-y-3">
+              <div className="bg-blue-50 rounded-2xl p-4 text-center">
+                <p className="text-3xl mb-2">📱</p>
+                <p className="font-bold text-blue-800">Collect via UPI</p>
+                <p className="text-sm text-blue-600 mt-1">
+                  {fmtRupee(totalPaise)}
+                </p>
+              </div>
+              {hasUpi && (
+                <>
+                  {!showUpiQr ? (
+                    <button
+                      onClick={() => setShowUpiQr(true)}
+                      className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 border-blue-200 text-blue-600 font-bold text-sm press"
+                    >
+                      <QrCode size={16} />
+                      Show QR Code
+                    </button>
+                  ) : (
+                    <div className="flex flex-col items-center gap-3 py-2">
+                      <div className="w-44 h-44 rounded-2xl bg-gray-50 border-2 border-gray-200 flex items-center justify-center overflow-hidden">
+                        {qrLoading && (
+                          <Loader2
+                            size={28}
+                            className="text-gray-300 animate-spin"
+                          />
+                        )}
+                        {!qrLoading && qrSrc && (
+                          <img
+                            src={qrSrc}
+                            alt="UPI QR"
+                            width={168}
+                            height={168}
+                            className="rounded-xl"
+                          />
+                        )}
+                        {!qrLoading && !qrSrc && (
+                          <p className="text-xs text-gray-400">
+                            QR unavailable
+                          </p>
+                        )}
+                      </div>
+                      <p className="text-xs text-gray-500 font-semibold">
+                        {session?.upiId}
+                      </p>
+                    </div>
+                  )}
+                </>
+              )}
+              {!hasUpi && (
+                <p className="text-xs text-gray-400 text-center">
+                  Add UPI ID in Settings to show QR code
+                </p>
+              )}
+              <label
+                className={`flex items-center gap-3 p-3 rounded-2xl border-2 cursor-pointer select-none transition-colors ${
+                  upiConfirmed
+                    ? "border-primary-500 bg-primary-50"
+                    : "border-gray-200 bg-white"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={upiConfirmed}
+                  onChange={(e) => setUpiConfirmed(e.target.checked)}
+                  className="w-5 h-5 accent-primary-500 shrink-0"
+                />
+                <span className="text-sm font-bold text-gray-700">
+                  Payment received on UPI ✓
+                </span>
+              </label>
+            </div>
+          )}
+
+          {/* Split */}
+          {method === "split" && (
+            <div className="space-y-3">
+              <p className="text-sm font-bold text-gray-700">Split Payment</p>
+              <div className="flex gap-3">
+                <div className="flex-1">
+                  <label className="text-xs text-gray-500 font-semibold block mb-1">
+                    Cash (₹)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    className="bm-input"
+                    placeholder="0"
+                    value={splitCash}
+                    onChange={(e) => setSplitCash(e.target.value)}
+                  />
+                </div>
+                <div className="flex-1">
+                  <label className="text-xs text-gray-500 font-semibold block mb-1">
+                    UPI (₹)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    className="bm-input"
+                    placeholder="0"
+                    value={splitUpi}
+                    onChange={(e) => setSplitUpi(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div
+                className={`rounded-xl py-2 px-3 text-sm font-bold text-center ${
+                  splitOk
+                    ? "bg-green-50 text-green-700"
+                    : splitTotal > 0
+                    ? "bg-red-50 text-red-600"
+                    : "bg-gray-50 text-gray-500"
+                }`}
+              >
+                {splitOk
+                  ? `Covered ✓  (${fmtRupee(splitTotal)})`
+                  : splitTotal > 0
+                  ? `Short by ${fmtRupee(totalPaise - splitTotal)}`
+                  : `Need ${fmtRupee(totalPaise)}`}
+              </div>
+            </div>
+          )}
+
+          <button
+            disabled={!canConfirm}
+            onClick={handleConfirm}
+            className="w-full h-14 bg-primary-500 text-white rounded-2xl font-black text-lg disabled:opacity-40 press shadow-md flex items-center justify-center gap-2"
+          >
+            {placing && <Loader2 size={18} className="animate-spin" />}
+            {placing ? "Processing…" : `Confirm · ${fmtRupee(totalPaise)}`}
+          </button>
+        </div>
+      </Modal>
+    );
+  }
+
+  // ── Post-payment screen ─────────────────────────────────────────────────
+  const postTabs: { id: PostTab; label: string; Icon: React.ElementType }[] = [
+    ...(kotEnabled
+      ? [{ id: "kot" as PostTab, label: "KOT", Icon: ClipboardList }]
+      : []),
+    { id: "invoice" as PostTab, label: "Invoice", Icon: Printer },
+    { id: "whatsapp" as PostTab, label: "WhatsApp", Icon: MessageCircle },
+  ];
+
+  return (
+    <Modal open={open} onClose={handleDone} title="">
+      <div className="flex flex-col" style={{ maxHeight: "88dvh" }}>
+        {/* Success banner */}
+        <div className="flex items-center gap-3 px-5 pt-4 pb-3 border-b border-gray-100">
+          <div className="w-11 h-11 rounded-full bg-green-100 flex items-center justify-center shrink-0">
+            <CheckCircle2 size={24} className="text-green-500" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="font-black text-gray-900">Order Placed!</p>
+            <p className="text-xs text-gray-400">
+              #{order.billNumber}
+              {order.tableNumber ? ` · Table ${order.tableNumber}` : ""}
+              {" · "}
+              {fmtRupee(order.totalPaise)}
+              {order.changePaise && order.changePaise > 0
+                ? ` · Change: ${fmtRupee(order.changePaise)}`
+                : ""}
+            </p>
+          </div>
+          <button onClick={handleDone} className="text-gray-400 press p-1">
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex border-b border-gray-100 px-3 pt-2">
+          {postTabs.map(({ id, label, Icon }) => (
+            <button
+              key={id}
+              onClick={() => setPostTab(id)}
+              className={`flex items-center gap-1.5 px-3 py-2 text-sm font-bold border-b-2 transition-colors ${
+                postTab === id
+                  ? "border-primary-500 text-primary-600"
+                  : "border-transparent text-gray-400"
+              }`}
+            >
+              <Icon size={15} />
               {label}
             </button>
           ))}
         </div>
 
-        {/* ── Table picker ── */}
-        {tablesEnabled && serviceMode === "dine_in" && (
-          <div className="px-3 pb-2 shrink-0">
-            <button
-              onClick={() => setShowTablePicker(!showTablePicker)}
-              className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl border-2 text-sm font-bold transition-all press ${
-                tableNumber
-                  ? "border-primary-500 bg-primary-50 text-primary-600"
-                  : "border-gray-200 text-gray-500"
-              }`}
-            >
-              <LayoutGrid size={14} />
-              {tableNumber ? `Table ${tableNumber}` : "Select Table"}
-              <span className="ml-auto text-xs">
-                {showTablePicker ? "▲" : "▼"}
-              </span>
-            </button>
-            {showTablePicker && (
-              <div className="mt-2 grid grid-cols-5 gap-1.5">
-                {Array.from({ length: tableCount }, (_, i) => i + 1).map(
-                  (n) => {
-                    const isOpen = allTableOrders.some(
-                      (o) =>
-                        o.tableNumber === n &&
-                        o.status === "OCCUPIED" &&
-                        o.items.length > 0
-                    );
-                    return (
-                      <button
-                        key={n}
-                        onClick={() => {
-                          setTableNumber(n === tableNumber ? undefined : n);
-                          setShowTablePicker(false);
-                        }}
-                        className={`relative h-9 rounded-xl text-sm font-bold border-2 press transition-all ${
-                          tableNumber === n
-                            ? "border-primary-500 bg-primary-500 text-white"
-                            : isOpen
-                            ? "border-amber-400 bg-amber-50 text-amber-700"
-                            : "border-gray-200 text-gray-700"
-                        }`}
-                      >
-                        {n}
-                        {isOpen && tableNumber !== n && (
-                          <span className="absolute -top-1 -right-1 w-2 h-2 bg-amber-400 rounded-full" />
-                        )}
-                      </button>
-                    );
-                  }
-                )}
-                {tableNumber && (
-                  <button
-                    onClick={() => {
-                      setTableNumber(undefined);
-                      setShowTablePicker(false);
-                    }}
-                    className="h-9 rounded-xl text-xs font-bold border-2 border-red-200 text-red-500 press col-span-2"
-                  >
-                    Clear
-                  </button>
-                )}
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          {/* KOT tab */}
+          {postTab === "kot" && (
+            <div className="flex flex-col items-center text-center py-4">
+              <div className="w-16 h-16 rounded-3xl bg-orange-500 flex items-center justify-center mb-4">
+                <ClipboardList size={32} className="text-white" />
               </div>
-            )}
-          </div>
-        )}
-
-        {/* ── Cart header ── */}
-        <div className="flex items-center justify-between px-4 py-2 border-b border-gray-100 shrink-0">
-          <h2 className="font-bold text-gray-900 text-sm">
-            Cart
-            {itemCount > 0
-              ? ` · ${itemCount} item${itemCount > 1 ? "s" : ""}`
-              : ""}
-          </h2>
-          {cart.length > 0 && (
-            <button
-              onClick={handleClearAll}
-              className="text-xs font-semibold text-red-500 press"
-            >
-              Clear all
-            </button>
-          )}
-        </div>
-
-        {/* ── Cart items ── */}
-        <div className="flex-1 overflow-y-auto px-4 py-2 space-y-2">
-          {cart.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-40 text-gray-300 select-none">
-              <span className="text-5xl mb-3">🛒</span>
-              <p className="text-sm font-semibold">Cart is empty</p>
-              <p className="text-xs mt-1">Tap items to add</p>
-            </div>
-          ) : (
-            cart.map((item) => {
-              const ao = item.selectedAddOns.reduce(
-                (s, a) => s + a.pricePaise,
-                0
-              );
-              const lineTotal = (item.unitPricePaise + ao) * item.qty;
-              return (
-                <div key={item.cartId} className="bg-gray-50 rounded-2xl p-3">
-                  <div className="flex items-start gap-2 mb-2">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-bold text-gray-900 truncate">
-                        {item.name}
-                      </p>
-                      {item.selectedSize && (
-                        <p className="text-xs text-gray-500">
-                          {item.selectedSize}
-                        </p>
-                      )}
+              <h3 className="font-black text-gray-900 text-lg mb-1">
+                Kitchen Order Ticket
+              </h3>
+              <p className="text-sm text-gray-400 mb-2">
+                {order.tableNumber
+                  ? `Table ${order.tableNumber}`
+                  : order.serviceMode.replace("_", " ")}{" "}
+                · {order.items.length} item
+                {order.items.length > 1 ? "s" : ""}
+              </p>
+              <div className="w-full bg-gray-50 rounded-2xl p-4 text-left mb-6 space-y-2">
+                {order.items.map((item, i) => (
+                  <div key={i} className="flex gap-2 text-sm">
+                    <span className="font-black text-primary-500 w-6 shrink-0">
+                      {item.qty}×
+                    </span>
+                    <div>
+                      <p className="font-bold text-gray-900">{item.name}</p>
                       {item.selectedPortion && (
                         <p className="text-xs text-gray-500">
                           {item.selectedPortion}
@@ -331,188 +646,143 @@ export default function CartPanel({ onClose }: Props) {
                         </p>
                       )}
                       {item.notes && (
-                        <p className="text-xs text-primary-500 italic mt-0.5">
-                          &quot;{item.notes}&quot;
+                        <p className="text-xs text-orange-500 italic">
+                          → {item.notes}
                         </p>
                       )}
                     </div>
-                    <button
-                      onClick={() => removeFromCart(item.cartId)}
-                      className="text-gray-300 hover:text-red-400 p-0.5 shrink-0 press"
-                    >
-                      <Trash2 size={14} />
-                    </button>
                   </div>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center bg-white border border-gray-200 rounded-xl overflow-hidden">
-                      <button
-                        onClick={() =>
-                          updateCartQty(item.cartId, item.qty - 1)
-                        }
-                        className="w-8 h-8 flex items-center justify-center hover:bg-gray-50 press"
-                      >
-                        <Minus size={13} />
-                      </button>
-                      <span className="w-7 text-center text-sm font-black">
-                        {item.qty}
-                      </span>
-                      <button
-                        onClick={() =>
-                          updateCartQty(item.cartId, item.qty + 1)
-                        }
-                        className="w-8 h-8 flex items-center justify-center bg-primary-500 press"
-                      >
-                        <Plus size={13} className="text-white" />
-                      </button>
-                    </div>
-                    <span className="text-sm font-black text-gray-900">
-                      {fmtRupee(lineTotal)}
-                    </span>
-                  </div>
+                ))}
+              </div>
+              <button
+                onClick={handlePrintKotPost}
+                className="w-full h-12 flex items-center justify-center gap-2 bg-orange-500 text-white rounded-2xl font-bold press shadow-md"
+              >
+                <Printer size={18} />
+                Print KOT
+              </button>
+            </div>
+          )}
+
+          {/* Invoice tab */}
+          {postTab === "invoice" && (
+            <div>
+              <div
+                ref={invoiceRef}
+                className="font-mono text-xs leading-relaxed bg-white border border-dashed border-gray-300 rounded-xl p-4 mx-auto"
+                style={{ maxWidth: "320px" }}
+              >
+                <div className="text-center font-bold text-sm mb-1">
+                  {session?.businessName ?? "Sth1r"}
                 </div>
-              );
-            })
+                <div className="border-t border-dashed border-gray-300 my-2" />
+                <div className="flex justify-between">
+                  <span>Bill #: {order.billNumber}</span>
+                  <span>{fmtDate(order.createdAt)}</span>
+                </div>
+                {order.tableNumber && (
+                  <div className="text-center text-xs mt-1">
+                    Table: {order.tableNumber}
+                  </div>
+                )}
+                <div className="border-t border-dashed border-gray-300 my-2" />
+                {order.items.map((item, i) => {
+                  const ao = item.selectedAddOns.reduce(
+                    (s, a) => s + a.pricePaise,
+                    0
+                  );
+                  const line = (item.unitPricePaise + ao) * item.qty;
+                  return (
+                    <div key={i} className="mb-1">
+                      <div className="flex justify-between">
+                        <span className="flex-1 truncate pr-2">
+                          {item.name}
+                        </span>
+                        <span>{fmtRupee(line)}</span>
+                      </div>
+                      <div className="text-gray-400 pl-2">
+                        {item.qty} × {fmtRupee(item.unitPricePaise + ao)}
+                      </div>
+                    </div>
+                  );
+                })}
+                <div className="border-t border-dashed border-gray-300 my-2" />
+                <div className="flex justify-between text-gray-500">
+                  <span>Subtotal</span>
+                  <span>{fmtRupee(order.subtotalPaise)}</span>
+                </div>
+                {order.discountPaise > 0 && (
+                  <div className="flex justify-between text-gray-500">
+                    <span>Discount</span>
+                    <span>-{fmtRupee(order.discountPaise)}</span>
+                  </div>
+                )}
+                {order.gstPercent > 0 && (
+                  <div className="flex justify-between text-gray-500">
+                    <span>GST ({order.gstPercent}%)</span>
+                    <span>{fmtRupee(order.gstPaise)}</span>
+                  </div>
+                )}
+                <div className="border-t border-dashed border-gray-300 my-2" />
+                <div className="flex justify-between font-bold text-sm">
+                  <span>TOTAL</span>
+                  <span>{fmtRupee(order.totalPaise)}</span>
+                </div>
+                <div className="flex justify-between text-gray-500 mt-1">
+                  <span>Payment</span>
+                  <span>{order.paymentMethod.toUpperCase()}</span>
+                </div>
+                {order.changePaise != null && order.changePaise > 0 && (
+                  <div className="flex justify-between text-gray-500">
+                    <span>Change</span>
+                    <span>{fmtRupee(order.changePaise)}</span>
+                  </div>
+                )}
+                <div className="border-t border-dashed border-gray-300 my-3" />
+                <div className="text-center text-gray-400">
+                  Thank you! Visit again 🙏
+                </div>
+              </div>
+              <button
+                onClick={handlePrintInvoice}
+                className="mt-4 w-full h-11 flex items-center justify-center gap-2 bg-gray-900 text-white rounded-2xl font-bold text-sm press"
+              >
+                <Printer size={16} />
+                Print Invoice
+              </button>
+            </div>
+          )}
+
+          {/* WhatsApp tab */}
+          {postTab === "whatsapp" && (
+            <div className="flex flex-col items-center text-center py-4">
+              <div className="w-16 h-16 rounded-3xl bg-green-500 flex items-center justify-center mb-4">
+                <MessageCircle size={32} className="text-white" />
+              </div>
+              <h3 className="font-black text-gray-900 text-lg mb-1">
+                Send Receipt
+              </h3>
+              <p className="text-sm text-gray-400 mb-6">Share via WhatsApp</p>
+              <button
+                onClick={handleWhatsApp}
+                className="w-full h-12 flex items-center justify-center gap-2 bg-green-500 text-white rounded-2xl font-bold press shadow-md"
+              >
+                <MessageCircle size={18} />
+                Open in WhatsApp
+              </button>
+            </div>
           )}
         </div>
 
-        {/* ── Summary + actions ── */}
-        {cart.length > 0 && (
-          <div className="border-t border-gray-100 px-4 pt-3 pb-4 space-y-3 shrink-0 bg-white">
-            {/* Discount */}
-            <div className="flex items-center gap-2">
-              <Tag size={14} className="text-gray-400 shrink-0" />
-              <div className="flex rounded-xl border border-gray-200 overflow-hidden shrink-0">
-                <button
-                  onClick={() => setDiscountType("flat")}
-                  className={`px-2.5 py-1.5 text-xs font-bold transition-colors ${
-                    discountType === "flat"
-                      ? "bg-primary-500 text-white"
-                      : "bg-white text-gray-500"
-                  }`}
-                >
-                  ₹
-                </button>
-                <button
-                  onClick={() => setDiscountType("percent")}
-                  className={`px-2.5 py-1.5 text-xs font-bold transition-colors ${
-                    discountType === "percent"
-                      ? "bg-primary-500 text-white"
-                      : "bg-white text-gray-500"
-                  }`}
-                >
-                  %
-                </button>
-              </div>
-              <input
-                type="number"
-                min="0"
-                max={discountType === "percent" ? "100" : undefined}
-                className={`flex-1 h-8 px-3 rounded-xl border text-sm font-semibold outline-none transition-colors ${
-                  discountCapped
-                    ? "border-amber-400 bg-amber-50 text-amber-700"
-                    : "border-gray-200 focus:border-primary-500"
-                }`}
-                placeholder={
-                  discountType === "flat" ? "Discount ₹" : "Discount %"
-                }
-                value={discountInput}
-                onChange={(e) => setDiscountInput(e.target.value)}
-              />
-            </div>
-            {discountCapped && (
-              <p className="text-xs text-amber-600 font-semibold -mt-1">
-                Discount capped at subtotal
-              </p>
-            )}
-
-            {/* Totals */}
-            <div className="space-y-1 text-sm">
-              <div className="flex justify-between text-gray-500">
-                <span>Subtotal</span>
-                <span className="font-semibold">
-                  {fmtRupee(subtotalPaise)}
-                </span>
-              </div>
-              {discountPaise > 0 && (
-                <div className="flex justify-between text-green-600">
-                  <span>
-                    Discount
-                    {discountType === "percent" ? ` (${discountValue}%)` : ""}
-                  </span>
-                  <span className="font-semibold">
-                    −{fmtRupee(discountPaise)}
-                  </span>
-                </div>
-              )}
-              {discountPaise > 0 && (
-                <div className="flex justify-between text-gray-400 text-xs">
-                  <span>Taxable amount</span>
-                  <span className="font-semibold">
-                    {fmtRupee(afterDiscount)}
-                  </span>
-                </div>
-              )}
-              {gstPercent > 0 && (
-                <div className="flex justify-between text-gray-500">
-                  <span>GST ({gstPercent}%)</span>
-                  <span className="font-semibold">{fmtRupee(gstPaise)}</span>
-                </div>
-              )}
-              <div className="flex justify-between text-base font-black text-gray-900 pt-1.5 border-t border-gray-100">
-                <span>Total</span>
-                <span className="text-primary-500">
-                  {fmtRupee(totalPaise)}
-                </span>
-              </div>
-            </div>
-
-            {/* Hold button */}
-            {openTableBilling && serviceMode === "dine_in" && (
-              <button
-                onClick={handleHold}
-                disabled={holding || !tableNumber}
-                className="w-full h-11 flex items-center justify-center gap-2 rounded-2xl border-2 border-amber-400 text-amber-700 font-bold text-sm press disabled:opacity-40"
-              >
-                {kotEnabled ? (
-                  <ClipboardList size={16} />
-                ) : (
-                  <BookmarkCheck size={16} />
-                )}
-                {holding
-                  ? "Holding…"
-                  : tableNumber
-                  ? kotEnabled
-                    ? `Hold Table ${tableNumber} + Fire KOT`
-                    : `Hold on Table ${tableNumber}`
-                  : "Select a table to hold"}
-              </button>
-            )}
-
-            {/* Checkout */}
-            <button
-              onClick={() => setShowCheckout(true)}
-              className="w-full h-12 bg-primary-500 text-white rounded-2xl font-bold press shadow-md"
-            >
-              Checkout · {fmtRupee(totalPaise)}
-            </button>
-          </div>
-        )}
+        <div className="px-5 pb-5 pt-2 border-t border-gray-100">
+          <button
+            onClick={handleDone}
+            className="w-full h-12 bg-primary-500 text-white rounded-2xl font-bold press shadow-md"
+          >
+            New Order
+          </button>
+        </div>
       </div>
-
-      <CheckoutModal
-        open={showCheckout}
-        onClose={() => {
-          setShowCheckout(false);
-          onClose?.();
-        }}
-        totalPaise={totalPaise}
-        subtotalPaise={subtotalPaise}
-        discountPaise={discountPaise}
-        gstPaise={gstPaise}
-        gstPercent={gstPercent}
-        discountType={discountType}
-        discountValue={discountValue}
-      />
-    </>
+    </Modal>
   );
 }
