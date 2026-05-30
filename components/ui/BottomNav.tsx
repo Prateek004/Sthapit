@@ -11,18 +11,22 @@ import {
 } from "lucide-react";
 import { useApp } from "@/lib/store/AppContext";
 
-const TABS = [
-  { href: "/dashboard", label: "Home",     Icon: LayoutDashboard },
-  { href: "/pos",       label: "POS",      Icon: ShoppingCart    },
-  { href: "/tables",    label: "Tables",   Icon: LayoutGrid      },
-  { href: "/orders",    label: "Orders",   Icon: ClipboardList   },
-  { href: "/settings",  label: "Settings", Icon: Settings        },
-];
-
 export default function BottomNav() {
   const pathname = usePathname();
   const { state } = useApp();
   const cartCount = state.cart.reduce((s, i) => s + i.qty, 0);
+  const tablesEnabled = state.session?.stockSettings?.tablesEnabled ?? false;
+
+  const TABS = [
+    { href: "/dashboard", label: "Home", Icon: LayoutDashboard },
+    { href: "/pos", label: "POS", Icon: ShoppingCart },
+    ...(tablesEnabled
+      ? [{ href: "/tables", label: "Tables", Icon: LayoutGrid }]
+      : []),
+    { href: "/orders", label: "Orders", Icon: ClipboardList },
+    { href: "/stock", label: "Stock", Icon: Package },
+    { href: "/settings", label: "Settings", Icon: Settings },
+  ];
 
   return (
     <nav
