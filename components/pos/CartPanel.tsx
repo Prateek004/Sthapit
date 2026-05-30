@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import CheckoutModal from "./CheckoutModal";
 import type { ServiceMode } from "@/lib/types";
+import { useTableStore, useAllTableOrders } from "@/lib/store/tableStore";
 
 const SERVICE_MODES: {
   mode: ServiceMode;
@@ -103,6 +104,8 @@ export default function CartPanel({ onClose }: Props) {
     showToast,
   } = useApp();
   const { cart, session, serviceMode, tableNumber } = state;
+  const { addCartItems } = useTableStore();
+  const allTableOrders = useAllTableOrders();
 
   const ss = session?.stockSettings;
   const tablesEnabled = ss?.tablesEnabled ?? false;
@@ -156,20 +159,25 @@ export default function CartPanel({ onClose }: Props) {
     if (cart.length === 0) return;
     setHolding(true);
     try {
-      await holdToTable(tableNumber);
+      const tableId = `t${tableNumber}`;
+      const tableName = `Table ${tableNumber}`;
+      const heldItems = [...cart];
+      await addCartItems(tableId, tableName, tableNumber, heldItems);
+      clearCart();
       if (kotEnabled) {
         const kotRef = `KOT-T${tableNumber}-${Date.now().toString().slice(-6)}`;
         printKot({
           billNumber: kotRef,
           tableNumber,
           serviceMode: "dine_in",
-          items: cart,
+          items: heldItems,
           businessName: session?.businessName,
         });
         showToast(`Table ${tableNumber} held — KOT fired to kitchen ✓`);
       } else {
         showToast(`Cart held on Table ${tableNumber} ✓`);
       }
+      setTableNumber(undefined);
       onClose?.();
     } catch {
       showToast("Failed to hold order", "error");
@@ -220,8 +228,11 @@ export default function CartPanel({ onClose }: Props) {
               <div className="mt-2 grid grid-cols-5 gap-1.5">
                 {Array.from({ length: tableCount }, (_, i) => i + 1).map(
                   (n) => {
-                    const isOpen = state.openTables.some(
-                      (t) => t.tableNumber === n
+                    const isOpen = allTableOrders.some(
+                      (o) =>
+                        o.tableNumber === n &&
+                        o.status === "OCCUPIED" &&
+                        o.items.length > 0
                     );
                     return (
                       <button
