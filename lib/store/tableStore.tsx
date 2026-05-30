@@ -31,14 +31,31 @@ import type {
   TableOrderItem,
   MenuItem,
   AddOn,
+  CartItem,
   UserSession,
 } from "@/lib/types";
-import { calcDiscount, calcGST } from "@/lib/utils";
+import { calcGST } from "@/lib/utils";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function tableOrderId(tableId: string): string {
   return `table_${tableId}`;
+}
+
+function itemMergeKey(i: {
+  menuItemId: string;
+  selectedSize?: string;
+  selectedPortion?: string;
+  selectedAddOns: { id: string }[];
+  notes?: string;
+}): string {
+  return [
+    i.menuItemId,
+    i.selectedSize ?? "",
+    i.selectedPortion ?? "",
+    i.selectedAddOns.map((a) => a.id).sort().join(","),
+    i.notes ?? "",
+  ].join("|");
 }
 
 function computeTotals(
@@ -123,6 +140,8 @@ interface TableStoreContextValue {
   /** Get or create a table order for the given table */
   getOrCreateOrder: (tableId: string, tableName: string, tableNumber: number) => TableOrder;
   addItem: (tableId: string, tableName: string, tableNumber: number, item: MenuItem, addOns: AddOn[], size?: string, portion?: string, notes?: string) => Promise<void>;
+  /** Bulk-add already-configured cart items (used by the POS "Hold to table") */
+  addCartItems: (tableId: string, tableName: string, tableNumber: number, items: CartItem[]) => Promise<void>;
   updateItemQty: (tableId: string, cartId: string, qty: number) => Promise<void>;
   removeItem: (tableId: string, cartId: string) => Promise<void>;
   setDiscount: (tableId: string, discountPaise: number) => Promise<void>;
@@ -217,16 +236,7 @@ export function TableStoreProvider({
       ].join("|");
 
       let newItems: TableOrderItem[];
-      const matchIdx = existing.items.findIndex((i) => {
-        const k = [
-          i.menuItemId,
-          i.selectedSize ?? "",
-          i.selectedPortion ?? "",
-          i.selectedAddOns.map((a) => a.id).sort().join(","),
-          i.notes ?? "",
-        ].join("|");
-        return k === mergeKey;
-      });
+      const matchIdx = existing.items.findIndex((i) => itemMergeKey(i) === mergeKey);
 
       if (matchIdx !== -1) {
         newItems = existing.items.map((i, idx) =>
@@ -249,6 +259,63 @@ export function TableStoreProvider({
           notes,
         };
         newItems = [...existing.items, newItem];
+      }
+
+      const now = new Date().toISOString();
+      const { subtotalPaise, taxPaise, totalPaise } = computeTotals(
+        newItems,
+        gstPercent,
+        existing.discountPaise
+      );
+
+      const updated: TableOrder = {
+        ...existing,
+        items: newItems,
+        status: "OCCUPIED",
+        subtotalPaise,
+        taxPaise,
+        totalPaise,
+        updatedAt: now,
+        heldAt: existing.heldAt ?? now,
+        version: existing.version + 1,
+        syncStatus: "pending",
+      };
+      await persist(updated);
+    },
+    [getOrCreateOrder, gstPercent, persist]
+  );
+
+  const addCartItems = useCallback(
+    async (
+      tableId: string,
+      tableName: string,
+      tableNumber: number,
+      incoming: CartItem[]
+    ): Promise<void> => {
+      if (!incoming || incoming.length === 0) return;
+      const existing = getOrCreateOrder(tableId, tableName, tableNumber);
+
+      // Start from existing items, merge each incoming cart item by its config key.
+      const newItems: TableOrderItem[] = existing.items.map((i) => ({ ...i }));
+
+      for (const ci of incoming) {
+        const key = itemMergeKey(ci);
+        const idx = newItems.findIndex((i) => itemMergeKey(i) === key);
+        if (idx !== -1) {
+          newItems[idx] = { ...newItems[idx], qty: newItems[idx].qty + ci.qty };
+        } else {
+          newItems.push({
+            cartId: crypto.randomUUID(),
+            menuItemId: ci.menuItemId,
+            name: ci.name,
+            unitPricePaise: ci.unitPricePaise,
+            qty: ci.qty,
+            selectedSize: ci.selectedSize,
+            selectedPortion: ci.selectedPortion,
+            selectedAddOns: ci.selectedAddOns,
+            notes: ci.notes,
+          });
+        }
       }
 
       const now = new Date().toISOString();
@@ -381,6 +448,7 @@ export function TableStoreProvider({
         state,
         getOrCreateOrder,
         addItem,
+        addCartItems,
         updateItemQty,
         removeItem,
         setDiscount,
