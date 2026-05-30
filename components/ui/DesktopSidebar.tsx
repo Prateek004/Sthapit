@@ -8,16 +8,9 @@ import {
   LogOut,
   LayoutDashboard,
   LayoutGrid,
+  Package,
 } from "lucide-react";
 import { useApp } from "@/lib/store/AppContext";
-
-const NAV = [
-  { href: "/dashboard", label: "Dashboard", Icon: LayoutDashboard },
-  { href: "/pos",       label: "POS",       Icon: ShoppingCart    },
-  { href: "/tables",    label: "Tables",    Icon: LayoutGrid      },
-  { href: "/orders",    label: "Orders",    Icon: ClipboardList   },
-  { href: "/settings",  label: "Settings",  Icon: Settings        },
-];
 
 function S1Logo() {
   return (
@@ -53,6 +46,19 @@ export default function DesktopSidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const { state, logout } = useApp();
+
+  const tablesEnabled = state.session?.stockSettings?.tablesEnabled ?? false;
+
+  const NAV = [
+    { href: "/dashboard", label: "Dashboard", Icon: LayoutDashboard },
+    { href: "/pos", label: "POS", Icon: ShoppingCart },
+    ...(tablesEnabled
+      ? [{ href: "/tables", label: "Tables", Icon: LayoutGrid }]
+      : []),
+    { href: "/orders", label: "Orders", Icon: ClipboardList },
+    { href: "/stock", label: "Stock", Icon: Package },
+    { href: "/settings", label: "Settings", Icon: Settings },
+  ];
 
   const handleLogout = async () => {
     await logout();
