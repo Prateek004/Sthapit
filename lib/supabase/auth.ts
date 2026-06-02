@@ -20,6 +20,10 @@ const LOCAL_USERS_KEY = "sth1r_local_users";
 const LEGACY_LOCAL_USERS_KEY = "vynn_local_users";
 
 interface LocalUser {
+  // FIX #9: uid is now a true UUID, not "local_<username>".
+  // This prevents two businesses with the same username from sharing
+  // the same IndexedDB partition.
+  uid: string;
   username: string;
   passwordHash: string;
   salt?: string;
@@ -93,7 +97,10 @@ async function localSignUp(data: SignUpData): Promise<AuthResult> {
   }
   const salt = generateSalt();
   const passwordHash = await hashPassword(data.password, salt);
+  // FIX #9: Generate a real UUID as the partition key — not "local_<username>"
+  const uid = crypto.randomUUID();
   users.push({
+    uid,
     username,
     passwordHash,
     salt,
@@ -108,8 +115,6 @@ async function localSignUp(data: SignUpData): Promise<AuthResult> {
 }
 
 export async function signUp(data: SignUpData): Promise<AuthResult> {
-  // Always save locally first — this guarantees the user can log in
-  // regardless of what Supabase does (network down, rate limit, confirm email, etc.)
   const username = data.username.toLowerCase().trim();
 
   const sb = getSupabase();
@@ -127,8 +132,6 @@ export async function signUp(data: SignUpData): Promise<AuthResult> {
   const localResult = await localSignUp(data);
   if (!localResult.ok) return localResult;
 
-  // Fire Supabase signup in background — we don't block on it
-  // and we never return an error to the user because of it
   const email = `${username}@sth1r.app`;
   try {
     const { error } = await sb.auth.signUp({
@@ -145,11 +148,10 @@ export async function signUp(data: SignUpData): Promise<AuthResult> {
       },
     });
     if (error && !isRateLimitError(error.message)) {
-      // Non-rate-limit Supabase errors are non-fatal — user is already saved locally
       console.warn("[Sth1r] Supabase signUp non-fatal:", error.message);
     }
   } catch {
-    // Network down — local save already done above, nothing to do
+    // Network down — local save already done above
   }
 
   return { ok: true };
@@ -172,7 +174,6 @@ export async function signIn(
   const sb = getSupabase();
   const normalizedUsername = username.toLowerCase().trim();
 
-  // Always try local first — instant, works offline
   const localResult = await localSignIn(normalizedUsername, password);
 
   if (!sb) return localResult;
@@ -185,7 +186,6 @@ export async function signIn(
     });
 
     if (error) {
-      // Any Supabase error — fall back to local if it worked
       if (localResult.ok) return localResult;
       if (isRateLimitError(error.message)) {
         return { ok: false, error: error.message };
@@ -252,9 +252,13 @@ async function localSignIn(
 
   if (!match) return { ok: false, error: "Incorrect password" };
 
+  // FIX #9: Use the stored UUID as userId, fall back to legacy "local_<username>"
+  // for accounts created before this fix (so existing users aren't locked out).
+  const userId = user.uid ?? `local_${user.username}`;
+
   return {
     ok: true,
-    userId: `local_${user.username}`,
+    userId,
     role: user.role,
     businessName: user.businessName,
     businessType: user.businessType,
@@ -290,5 +294,32 @@ export async function getCurrentUserId(): Promise<string | null> {
     return data.user?.id ?? null;
   } catch {
     return null;
+  }
+}
+
+// ── FIX #3: Password recovery (Supabase path) ────────────────────────────────
+// Call this from a "Forgot password?" link on the sign-in screen.
+// Sends a recovery email via Supabase. The user lands on /reset-password
+// with an access_token in the URL hash; handle it there with
+// supabase.auth.updateUser({ password: newPassword }).
+export async function sendPasswordRecovery(username: string): Promise<AuthResult> {
+  const sb = getSupabase();
+  if (!sb) {
+    return {
+      ok: false,
+      error:
+        "Password recovery requires cloud sync to be enabled. " +
+        "Ask your administrator to set up Supabase, or contact support.",
+    };
+  }
+  const email = `${username.toLowerCase().trim()}@sth1r.app`;
+  try {
+    const { error } = await sb.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/reset-password`,
+    });
+    if (error) return { ok: false, error: error.message };
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "Network error — please check connection" };
   }
 }
