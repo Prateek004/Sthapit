@@ -15,19 +15,23 @@ export const fmtRupee = (paise: number): string =>
  * - "flat"   : value is in RUPEES (user types ₹50 → value=50 → 5000 paise)
  * - "percent": value is 0-100 (user types 10 → 10% of subtotal)
  * Result is clamped to [0, subtotalPaise].
+ *
+ * FIX #15: Negative values are rejected — Math.max(0, value) guards both paths.
  */
 export const calcDiscount = (
   subtotalPaise: number,
   type: "flat" | "percent",
   value: number
 ): number => {
-  if (!value || value <= 0) return 0;
+  // FIX #15: guard negative input — a negative discount makes no sense
+  const safeValue = Math.max(0, value);
+  if (!safeValue) return 0;
   if (type === "percent") {
-    const pct = Math.min(Math.max(value, 0), 100);
+    const pct = Math.min(safeValue, 100);
     return Math.round((subtotalPaise * pct) / 100);
   }
   // flat — value is in rupees
-  return Math.min(toP(value), subtotalPaise);
+  return Math.min(toP(safeValue), subtotalPaise);
 };
 
 /**
@@ -40,24 +44,41 @@ export const calcGST = (afterDiscountPaise: number, pct: number): number => {
 };
 
 // ── Sequential bill number — GST-compliant ────────────────────────────────────
-// Format: STH-FY26-000001  (FY = Indian financial year ending, Apr–Mar)
-// Resets automatically each new financial year.
-// Falls back to a random suffix if localStorage is unavailable (SSR / private).
+// Format: STH-FY26-000001-<deviceSuffix>
+// FY = Indian financial year ending, Apr–Mar. Resets each new FY.
+// deviceSuffix = short UUID stored in localStorage, prevents collisions when
+// two devices are offline simultaneously (FIX #11).
 const BILL_COUNTER_KEY = "sth1r_bill_counter";
-const BILL_FY_KEY = "sth1r_bill_fy";
+const BILL_FY_KEY      = "sth1r_bill_fy";
+const DEVICE_ID_KEY    = "sth1r_device_id";
 
 function getCurrentFY(): string {
   const now = new Date();
   const year = now.getFullYear();
-  const month = now.getMonth() + 1; // 1-indexed
-  // Indian FY: April–March. Month >= 4 means we're in the FY that ends next year.
+  const month = now.getMonth() + 1;
   const fyEnd = month >= 4 ? year + 1 : year;
   return String(fyEnd).slice(2); // e.g. "26" for FY 2025-26
+}
+
+// FIX #11: Returns a short, stable device ID. Generated once and stored.
+function getDeviceId(): string {
+  try {
+    let id = localStorage.getItem(DEVICE_ID_KEY);
+    if (!id) {
+      // 4-char alphanumeric, e.g. "A3F7"
+      id = crypto.randomUUID().replace(/-/g, "").slice(0, 4).toUpperCase();
+      localStorage.setItem(DEVICE_ID_KEY, id);
+    }
+    return id;
+  } catch {
+    return "X0";
+  }
 }
 
 export const generateBillNumber = (): string => {
   try {
     const fy = getCurrentFY();
+    const deviceId = getDeviceId();
     const storedFY = localStorage.getItem(BILL_FY_KEY) ?? "";
     let counter = parseInt(localStorage.getItem(BILL_COUNTER_KEY) ?? "0", 10);
 
@@ -69,7 +90,8 @@ export const generateBillNumber = (): string => {
 
     counter += 1;
     localStorage.setItem(BILL_COUNTER_KEY, String(counter));
-    return `STH-FY${fy}-${String(counter).padStart(6, "0")}`;
+    // FIX #11: Append device suffix to prevent bill number collisions across devices
+    return `STH-FY${fy}-${String(counter).padStart(6, "0")}-${deviceId}`;
   } catch {
     // Fallback: random suffix (SSR / private browsing)
     const rand = crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase();
