@@ -43,6 +43,11 @@ export function printKot(params: {
   }>;
   businessName?: string;
 }): void {
+  // FIX #7: Build the HTML first (sync), then open the window immediately.
+  // On iOS Safari, window.open() is only allowed synchronously inside a direct
+  // user-gesture handler. Calling it after any await or setTimeout blocks it.
+  // By computing the HTML before any async work and opening the window here,
+  // we ensure it works on iPhones without needing a popup.
   const { billNumber, tableNumber, serviceMode, items, businessName } = params;
   const tableInfo = tableNumber
     ? `Table: ${tableNumber}`
@@ -74,6 +79,8 @@ export function printKot(params: {
       .join("")}
     <hr/>
     </body></html>`;
+
+  // Open the window synchronously — must not be preceded by any await
   const w = window.open("", "_blank", "width=300,height=400");
   if (!w) {
     alert("Allow popups to print KOT");
@@ -151,6 +158,9 @@ export default function CartPanel({ onClose }: Props) {
   }, [cart.length, itemCount, clearCart]);
 
   // ── Hold to table — fires KOT immediately if kotEnabled ─────────────────
+  // FIX #7: window.open must be called synchronously in the button handler.
+  // We fire printKot (which opens the window) BEFORE the first await,
+  // so iOS Safari allows the popup.
   const handleHold = async () => {
     if (!tableNumber) {
       showToast("Select a table first", "error");
@@ -158,21 +168,28 @@ export default function CartPanel({ onClose }: Props) {
     }
     if (cart.length === 0) return;
     setHolding(true);
+
+    const tableId = `t${tableNumber}`;
+    const tableName = `Table ${tableNumber}`;
+    const heldItems = [...cart];
+
+    // FIX #7: Open KOT window NOW — synchronously, before any await.
+    // iOS Safari only permits window.open() inside a direct gesture handler.
+    if (kotEnabled) {
+      const kotRef = `KOT-T${tableNumber}-${Date.now().toString().slice(-6)}`;
+      printKot({
+        billNumber: kotRef,
+        tableNumber,
+        serviceMode: "dine_in",
+        items: heldItems,
+        businessName: session?.businessName,
+      });
+    }
+
     try {
-      const tableId = `t${tableNumber}`;
-      const tableName = `Table ${tableNumber}`;
-      const heldItems = [...cart];
       await addCartItems(tableId, tableName, tableNumber, heldItems);
       clearCart();
       if (kotEnabled) {
-        const kotRef = `KOT-T${tableNumber}-${Date.now().toString().slice(-6)}`;
-        printKot({
-          billNumber: kotRef,
-          tableNumber,
-          serviceMode: "dine_in",
-          items: heldItems,
-          businessName: session?.businessName,
-        });
         showToast(`Table ${tableNumber} held — KOT fired to kitchen ✓`);
       } else {
         showToast(`Cart held on Table ${tableNumber} ✓`);
