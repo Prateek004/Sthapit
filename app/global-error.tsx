@@ -9,6 +9,8 @@ export default function GlobalError({
   reset: () => void;
 }) {
   useEffect(() => {
+    // TODO: Replace with Sentry.captureException(error) once Sentry is installed
+    // npm install @sentry/nextjs  →  https://docs.sentry.io/platforms/javascript/guides/nextjs/
     console.error("[Sth1r] Global error:", error);
   }, [error]);
 
