@@ -167,7 +167,8 @@ async function restoreSessionFromSupabase(session: UserSession): Promise<UserSes
     if (!user) return session;
     const { data: profile } = await sb
       .from("profiles")
-      .select("gst_percent, upi_id")
+      // FIX #5: also fetch stock_settings so all devices stay in sync
+      .select("gst_percent, upi_id, stock_settings")
       .eq("id", user.id)
       .single();
     if (!profile) return session;
@@ -175,6 +176,10 @@ async function restoreSessionFromSupabase(session: UserSession): Promise<UserSes
       ...session,
       gstPercent: profile.gst_percent ?? session.gstPercent,
       upiId: profile.upi_id ?? session.upiId,
+      // stock_settings is a JSONB column — cast to StockSettings if present
+      ...(profile.stock_settings
+        ? { stockSettings: profile.stock_settings as import("@/lib/types").StockSettings }
+        : {}),
     };
   } catch {
     return session;
@@ -390,6 +395,9 @@ interface AppContextValue {
     }
   ) => Promise<Order>;
   setActiveStockTab: (tab: string) => void;
+  /** FIX #2: Notify AppContext that an order was placed from an external path (e.g. table checkout).
+   * Dispatches ORDER_ADD so the Orders page revenue counter updates without a full reload. */
+  notifyOrderPlaced: (order: Order) => void;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -776,6 +784,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     []
   );
 
+  // FIX #2: lets external checkout flows (e.g. /tables/[tableId]) add an order
+  // to AppContext state so the Orders page revenue counter updates immediately.
+  const notifyOrderPlaced = useCallback(
+    (order: Order) => {
+      dispatch({ type: "ORDER_ADD", payload: order });
+    },
+    []
+  );
+
   return (
     <AppContext.Provider
       value={{
@@ -789,6 +806,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         showToast,
         openTableAddItems, closeTable,
         setActiveStockTab,
+        notifyOrderPlaced,
       }}
     >
       <TableStoreProvider session={state.session}>
