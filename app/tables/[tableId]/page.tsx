@@ -438,6 +438,8 @@ interface CartPanelProps {
   onCheckout: () => void;
   onHold: () => Promise<void>;
   holding: boolean;
+  // FIX #16: callback so the parent page can track discount type for CheckoutSheet
+  onDiscountTypeChange?: (type: "flat" | "percent", percentValue: number) => void;
 }
 
 function TableCartPanel({
@@ -448,6 +450,7 @@ function TableCartPanel({
   onCheckout,
   onHold,
   holding,
+  onDiscountTypeChange,
 }: CartPanelProps) {
   const { updateItemQty, removeItem, setDiscount } = useTableStore();
   const order = useTableOrder(tableId);
@@ -471,9 +474,11 @@ function TableCartPanel({
     // Debounce: only persist after 400ms of no typing
     const timer = setTimeout(() => {
       setDiscount(tableId, paise);
+      // FIX #16: bubble discount type to parent so CheckoutSheet records it correctly
+      onDiscountTypeChange?.(discountType, discountType === "percent" ? val : 0);
     }, 400);
     return () => clearTimeout(timer);
-  }, [discountInput, discountType, subtotalPaise, tableId]);
+  }, [discountInput, discountType, subtotalPaise, tableId, onDiscountTypeChange]);
 
   if (items.length === 0) {
     return (
@@ -707,6 +712,9 @@ interface CheckoutSheetProps {
   businessName?: string;
   onDone: () => void;
   onClose: () => void;
+  // FIX #16: receive actual discount type so it's recorded correctly on the order
+  checkoutDiscountType: "flat" | "percent";
+  checkoutDiscountPercent: number;
 }
 
 function CheckoutSheet({
@@ -718,8 +726,10 @@ function CheckoutSheet({
   businessName,
   onDone,
   onClose,
+  checkoutDiscountType,
+  checkoutDiscountPercent,
 }: CheckoutSheetProps) {
-  const { state: appState } = useApp();
+  const { state: appState, notifyOrderPlaced } = useApp();
   const { clearOrder } = useTableStore();
   const order = useTableOrder(tableId);
 
@@ -796,8 +806,11 @@ function CheckoutSheet({
         tableNumber,
         subtotalPaise,
         discountPaise,
-        discountType: "flat",
-        discountValue: discountPaise / 100,
+        // FIX #16: preserve the actual discount type instead of always recording "flat"
+        discountType: checkoutDiscountType,
+        discountValue: checkoutDiscountType === "percent"
+          ? checkoutDiscountPercent
+          : discountPaise / 100,
         gstPercent,
         gstPaise: taxPaise,
         totalPaise,
@@ -814,6 +827,9 @@ function CheckoutSheet({
 
       const { dbSaveOrder } = await import("@/lib/db");
       await dbSaveOrder(finalOrder, uid);
+
+      // FIX #2: notify AppContext so Orders page revenue counter updates immediately
+      notifyOrderPlaced(finalOrder);
 
       // Clear table order
       await clearOrder(tableId);
@@ -1263,6 +1279,9 @@ export default function TableOrderPage() {
 
   const [configItem, setConfigItem] = useState<MenuItem | null>(null);
   const [showCheckout, setShowCheckout] = useState(false);
+  // FIX #16: track discount type at page level so CheckoutSheet can record it correctly
+  const [cartDiscountType, setCartDiscountType] = useState<"flat" | "percent">("flat");
+  const [cartDiscountPercent, setCartDiscountPercent] = useState(0);
   const [holding, setHolding] = useState(false);
 
   useEffect(() => {
@@ -1374,6 +1393,7 @@ export default function TableOrderPage() {
             tableNumber={tableNumber}
             gstPercent={gstPercent}
             onCheckout={() => setShowCheckout(true)}
+            onDiscountTypeChange={(t, p) => { setCartDiscountType(t); setCartDiscountPercent(p); }}
             onHold={handleHold}
             holding={holding}
           />
@@ -1439,6 +1459,8 @@ export default function TableOrderPage() {
           businessName={session?.businessName}
           onDone={handleCheckoutDone}
           onClose={() => setShowCheckout(false)}
+          checkoutDiscountType={cartDiscountType}
+          checkoutDiscountPercent={cartDiscountPercent}
         />
       )}
     </AppShell>
