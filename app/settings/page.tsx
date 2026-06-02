@@ -62,7 +62,12 @@ export default function SettingsPage() {
         if (sb) {
           const { data: { user } } = await sb.auth.getUser();
           if (user) {
-            await sb.from("profiles").update({ gst_percent: gst, upi_id: upiId.trim() || null }).eq("id", user.id);
+            // FIX #5: also sync stockSettings so all devices get the same config
+            await sb.from("profiles").update({
+              gst_percent: gst,
+              upi_id: upiId.trim() || null,
+              stock_settings: stockSettings,
+            }).eq("id", user.id);
           }
         }
       } catch {}
@@ -76,7 +81,8 @@ export default function SettingsPage() {
   const handleReset = () => {
     if (!confirm("Reset ALL local data? This will clear your orders, menu, and session. Cannot be undone.")) return;
     try { localStorage.clear(); } catch {}
-    try { indexedDB.deleteDatabase("vynn_db"); indexedDB.deleteDatabase("servezy_db"); } catch {}
+    // FIX #6: delete the current active database (sth1r_db), not just legacy names
+    try { indexedDB.deleteDatabase("sth1r_db"); indexedDB.deleteDatabase("vynn_db"); indexedDB.deleteDatabase("servezy_db"); } catch {}
     window.location.href = "/auth";
   };
 
