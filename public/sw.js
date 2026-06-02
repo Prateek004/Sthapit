@@ -1,5 +1,7 @@
 // Sth1r Service Worker — offline-first PWA by Sthappit
-const CACHE_NAME = "sth1r-v1";
+// NOTE: Increment this version string with every significant deploy
+// so stale app shell HTML gets invalidated on next activate.
+const CACHE_NAME = "sth1r-v2";
 const PRECACHE_URLS = [
   "/",
   "/pos",
