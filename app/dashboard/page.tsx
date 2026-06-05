@@ -4,7 +4,7 @@ import { useApp } from "@/lib/store/AppContext";
 import AppShell from "@/components/ui/AppShell";
 import { fmtRupee, todayStr, PAY_LABEL } from "@/lib/utils";
 import type { Order } from "@/lib/types";
-import { Banknote, Smartphone, ShoppingBag, Bell } from "lucide-react";
+import { Banknote, Smartphone, ShoppingBag, Bell, Printer } from "lucide-react";
 
 function DonutChart({ segments }: { segments: { color: string; value: number }[] }) {
   const total = segments.reduce((s, x) => s + x.value, 0) || 1;
@@ -65,26 +65,37 @@ export default function DashboardPage() {
 
   const today = todayStr();
   const todayOrders = allOrders.filter((o) => o.createdAt.startsWith(today));
-  const todaySales = todayOrders.reduce((s, o) => s + o.totalPaise, 0);
-  const totalSales = allOrders.reduce((s, o) => s + o.totalPaise, 0);
-  const totalOrders = allOrders.length;
+  // P1-07: exclude voided orders from all revenue
+  const todayValid = todayOrders.filter((o) => o.status !== "voided");
+  const allValid   = allOrders.filter((o) => o.status !== "voided");
+  const todaySales = todayValid.reduce((s, o) => s + o.totalPaise, 0);
+  const totalSales = allValid.reduce((s, o) => s + o.totalPaise, 0);
+  const totalOrders = allValid.length;
   const avgOrder = totalOrders > 0 ? Math.round(totalSales / totalOrders) : 0;
 
-  const byMethod = allOrders.reduce<Record<string, number>>((acc, o) => {
+  // P0-10: shift summary data
+  const todayCash  = todayValid.filter((o) => o.paymentMethod === "cash" || (o.paymentMethod === "split" && o.splitPayment))
+    .reduce((s, o) => s + (o.paymentMethod === "split" ? (o.splitPayment?.cashPaise ?? 0) : o.totalPaise), 0);
+  const todayUpi   = todayValid.filter((o) => o.paymentMethod === "upi" || (o.paymentMethod === "split" && o.splitPayment))
+    .reduce((s, o) => s + (o.paymentMethod === "split" ? (o.splitPayment?.upiPaise ?? 0) : o.totalPaise), 0);
+  const todayGst   = todayValid.reduce((s, o) => s + (o.gstPaise ?? 0), 0);
+  const todayVoids = todayOrders.filter((o) => o.status === "voided").length;
+
+  const byMethod = allValid.reduce<Record<string, number>>((acc, o) => {
     acc[o.paymentMethod] = (acc[o.paymentMethod] ?? 0) + o.totalPaise;
     return acc;
   }, {});
 
   const itemMap: Record<string, { name: string; qty: number; revenue: number }> = {};
-  allOrders.forEach((o) => o.items.forEach((i) => {
+  allValid.forEach((o) => o.items.forEach((i) => {
     if (!itemMap[i.menuItemId]) itemMap[i.menuItemId] = { name: i.name, qty: 0, revenue: 0 };
     itemMap[i.menuItemId].qty += i.qty;
     itemMap[i.menuItemId].revenue += i.unitPricePaise * i.qty;
   }));
 
   const topItems = Object.values(itemMap).sort((a, b) => b.revenue - a.revenue).slice(0, 5);
-  const last7 = allOrders.slice(-7).map((o) => Math.round(o.totalPaise / 100));
-  const recentOrders = [...allOrders].reverse().slice(0, 5);
+  const last7 = allValid.slice(-7).map((o) => Math.round(o.totalPaise / 100));
+  const recentOrders = [...allValid].reverse().slice(0, 5);
 
   const cash = byMethod["cash"] ?? 0;
   const upi = byMethod["upi"] ?? 0;
@@ -388,6 +399,80 @@ export default function DashboardPage() {
                 </div>
               </div>
             </div>
+          </div>
+
+          {/* ── P0-10: Shift Close / End of Day ── */}
+          <div style={{ ...card, marginTop: 16, marginBottom: 32 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+              <div>
+                <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 14, fontWeight: 700, color: coal, letterSpacing: "-0.01em" }}>
+                  End of Day Summary
+                </div>
+                <div style={{ fontSize: 11, color: ash, marginTop: 2 }}>{todayFmt}</div>
+              </div>
+              <button
+                onClick={() => {
+                  const lines = [
+                    `${bizName}`,
+                    `End of Day — ${todayFmt}`,
+                    `─────────────────────────`,
+                    `Orders today : ${todayValid.length}`,
+                    todayVoids > 0 ? `Voided       : ${todayVoids}` : null,
+                    ``,
+                    `Cash         : ${(todayCash / 100).toFixed(2)}`,
+                    `UPI          : ${(todayUpi / 100).toFixed(2)}`,
+                    `GST collected: ${(todayGst / 100).toFixed(2)}`,
+                    `─────────────────────────`,
+                    `TOTAL        : ${(todaySales / 100).toFixed(2)}`,
+                    ``,
+                    `Printed ${new Date().toLocaleTimeString("en-IN")}`,
+                  ].filter((l) => l !== null).join("\n");
+                  const w = window.open("", "_blank", "width=320,height=500");
+                  if (!w) return;
+                  w.document.write(
+                    `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>End of Day</title>` +
+                    `<style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Courier New',monospace;font-size:13px;padding:12mm;white-space:pre;line-height:1.6}</style>` +
+                    `</head><body>${lines.join("\n")}</body></html>`
+                  );
+                  w.document.close();
+                  w.focus();
+                  setTimeout(() => { w.print(); }, 400);
+                }}
+                style={{
+                  display: "flex", alignItems: "center", gap: 6,
+                  padding: "8px 14px", borderRadius: 10, border: "none", cursor: "pointer",
+                  background: fire, color: "white",
+                  fontSize: 12, fontWeight: 700, fontFamily: "'DM Sans', sans-serif",
+                }}
+              >
+                <Printer size={13} />
+                Print Z Report
+              </button>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+              {[
+                { label: "Orders", value: String(todayValid.length), sub: todayVoids > 0 ? `${todayVoids} voided` : "all completed" },
+                { label: "Total Revenue", value: fmtRupee(todaySales), sub: "excl. voided" },
+                { label: "Cash collected", value: fmtRupee(todayCash), sub: "" },
+                { label: "UPI collected", value: fmtRupee(todayUpi), sub: "" },
+                { label: "GST collected", value: fmtRupee(todayGst), sub: "to remit" },
+                { label: "Net (excl. GST)", value: fmtRupee(Math.max(0, todaySales - todayGst)), sub: "" },
+              ].map((row, i) => (
+                <div key={i} style={{
+                  background: i === 1 ? fire50 : sand,
+                  borderRadius: 10, padding: "10px 12px",
+                }}>
+                  <p style={{ fontSize: 10, color: i === 1 ? fire : ash, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase" }}>{row.label}</p>
+                  <p style={{ fontFamily: "'Syne', sans-serif", fontSize: 16, fontWeight: 700, color: i === 1 ? fire : coal, marginTop: 2 }}>{row.value}</p>
+                  {row.sub && <p style={{ fontSize: 10, color: ash, marginTop: 1 }}>{row.sub}</p>}
+                </div>
+              ))}
+            </div>
+
+            {todayValid.length === 0 && (
+              <p style={{ fontSize: 12, color: ash, textAlign: "center", padding: "8px 0" }}>No orders yet today</p>
+            )}
           </div>
 
         </div>
