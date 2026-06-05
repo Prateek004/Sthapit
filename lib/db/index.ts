@@ -7,9 +7,25 @@ import type {
   FinishedGood,
   OpenTable,
   TableOrder,
+  PersistedCart,
 } from "@/lib/types";
 
 type WithUid<T> = T & { _uid: string };
+
+// ── Migration status — P0-11: never silently fail ─────────────────────────────
+const MIGRATION_STATUS_KEY = "sth1r_migration_status";
+export type MigrationStatus = "ok" | "failed" | "in_progress" | "none";
+
+export function getMigrationStatus(): MigrationStatus {
+  try {
+    return (localStorage.getItem(MIGRATION_STATUS_KEY) as MigrationStatus) ?? "none";
+  } catch {
+    return "none";
+  }
+}
+function setMigrationStatus(s: MigrationStatus) {
+  try { localStorage.setItem(MIGRATION_STATUS_KEY, s); } catch {}
+}
 
 async function migrateIfNeeded(): Promise<void> {
   try {
@@ -20,10 +36,12 @@ async function migrateIfNeeded(): Promise<void> {
     const hasVynn = dbNames.includes("vynn_db");
     const hasServezy = dbNames.includes("servezy_db");
 
-    if (hasSth1r) return;
+    if (hasSth1r) { setMigrationStatus("ok"); return; }
 
     const sourceDbName = hasVynn ? "vynn_db" : hasServezy ? "servezy_db" : null;
-    if (!sourceDbName) return;
+    if (!sourceDbName) { setMigrationStatus("ok"); return; }
+
+    setMigrationStatus("in_progress");
 
     const old = await new Promise<IDBDatabase>((resolve, reject) => {
       const req = indexedDB.open(sourceDbName);
@@ -70,14 +88,20 @@ async function migrateIfNeeded(): Promise<void> {
     }
     sth1r.close();
 
+    // Only delete old DB after sth1r confirmed written
     await new Promise<void>((resolve) => {
       const req = indexedDB.deleteDatabase(sourceDbName);
       req.onsuccess = () => resolve();
       req.onerror  = () => resolve();
       req.onblocked = () => resolve();
     });
-  } catch {
-    // non-fatal
+
+    setMigrationStatus("ok");
+  } catch (err) {
+    // P0-11: Track migration failure — do NOT silently continue
+    setMigrationStatus("failed");
+    console.error("[Sth1r] DB migration failed:", err);
+    // Non-fatal: app can still work with empty sth1r_db
   }
 }
 
@@ -90,6 +114,7 @@ class Sth1rDB extends Dexie {
   barItems!:      Table<WithUid<FinishedGood>, string>;
   openTables!:    Table<WithUid<OpenTable>,    string>;
   tableOrders!:   Table<WithUid<TableOrder>,   string>;
+  carts!:         Table<PersistedCart,         string>; // P0-01
 
   constructor() {
     super("sth1r_db");
@@ -102,7 +127,6 @@ class Sth1rDB extends Dexie {
       barItems:      "id, _uid, name, expiryDate",
       openTables:    "id, _uid, tableNumber",
     });
-    // Version 2: add tableOrders store
     this.version(2).stores({
       orders:        "id, _uid, createdAt, syncStatus",
       menuItems:     "id, _uid, categoryId",
@@ -112,6 +136,18 @@ class Sth1rDB extends Dexie {
       barItems:      "id, _uid, name, expiryDate",
       openTables:    "id, _uid, tableNumber",
       tableOrders:   "id, _uid, tableId, status, syncStatus",
+    });
+    // Version 3: P0-01 cart store + orders status index
+    this.version(3).stores({
+      orders:        "id, _uid, createdAt, syncStatus, status",
+      menuItems:     "id, _uid, categoryId",
+      categories:    "id, _uid, sortOrder",
+      rawMaterials:  "id, _uid, name",
+      finishedGoods: "id, _uid, name, expiryDate",
+      barItems:      "id, _uid, name, expiryDate",
+      openTables:    "id, _uid, tableNumber",
+      tableOrders:   "id, _uid, tableId, status, syncStatus",
+      carts:         "id",
     });
   }
 }
@@ -126,6 +162,31 @@ function getDB(): Promise<Sth1rDB> {
     return _db;
   });
   return _ready;
+}
+
+// ── P0-01: Cart persistence to IndexedDB ──────────────────────────────────────
+const CART_IDB_KEY = "active_cart";
+
+export async function dbSaveCart(items: import("@/lib/types").CartItem[], uid: string): Promise<void> {
+  const db = await getDB();
+  await db.carts.put({ id: CART_IDB_KEY, _uid: uid, items, updatedAt: new Date().toISOString() });
+}
+
+export async function dbLoadCart(uid: string): Promise<import("@/lib/types").CartItem[]> {
+  try {
+    const db = await getDB();
+    const rec = await db.carts.get(CART_IDB_KEY);
+    if (!rec || rec._uid !== uid) return [];
+    return rec.items ?? [];
+  } catch {
+    return [];
+  }
+}
+
+export async function dbClearCart(uid: string): Promise<void> {
+  const db = await getDB();
+  const rec = await db.carts.get(CART_IDB_KEY);
+  if (rec && rec._uid === uid) await db.carts.delete(CART_IDB_KEY);
 }
 
 // ── Orders ────────────────────────────────────────────────────────────────────
@@ -161,6 +222,19 @@ export async function dbUpdateSyncStatus(
 ): Promise<void> {
   const db = await getDB();
   await db.orders.update(id, { syncStatus: status });
+}
+// P0-09: void/refund
+export async function dbVoidOrder(id: string, uid: string, reason?: string): Promise<void> {
+  const db = await getDB();
+  const rec = await db.orders.get(id);
+  if (rec && rec._uid === uid) {
+    await db.orders.update(id, {
+      status: "voided",
+      voidedAt: new Date().toISOString(),
+      voidReason: reason ?? "",
+      syncStatus: "pending",
+    });
+  }
 }
 
 // ── Menu Items ────────────────────────────────────────────────────────────────
