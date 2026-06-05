@@ -76,7 +76,8 @@ function computeTotals(
 function makeTableOrder(
   tableId: string,
   tableName: string,
-  tableNumber: number
+  tableNumber: number,
+  gstPercentAtOpen: number
 ): TableOrder {
   const now = new Date().toISOString();
   return {
@@ -95,6 +96,8 @@ function makeTableOrder(
     updatedAt: now,
     version: 1,
     syncStatus: "pending",
+    // P0-08: lock GST rate at open time — never retroactively changed
+    gstPercentAtOpen,
   };
 }
 
@@ -163,7 +166,7 @@ export function TableStoreProvider({
 }) {
   const [state, dispatch] = useReducer(reducer, { orders: {}, isLoading: true });
   const uid = session?.userId ?? "default";
-  const gstPercent = session?.gstPercent ?? 0;
+  const currentGstPercent = session?.gstPercent ?? 0;
   // Ref to avoid stale closures in async save functions
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -179,6 +182,25 @@ export function TableStoreProvider({
         dispatch({ type: "INIT", orders });
       })
     );
+  }, [session?.userId]);
+
+  // P1-01: Supabase Realtime — table state pushed to all devices instantly
+  useEffect(() => {
+    if (!session?.userId) return;
+    import("@/lib/supabase/tableSync").then(({ subscribeToTableOrders }) => {
+      const unsub = subscribeToTableOrders(
+        session.userId,
+        (order) => {
+          // Only apply if remote is newer than local
+          const local = stateRef.current.orders[order.id];
+          if (!local || order.version > local.version) {
+            dispatch({ type: "UPSERT", order });
+          }
+        },
+        (orderId) => dispatch({ type: "DELETE", id: orderId })
+      );
+      return unsub;
+    }).catch(() => {});
   }, [session?.userId]);
 
   // ── Internal: persist + dispatch ─────────────────────────────────────────
@@ -200,9 +222,9 @@ export function TableStoreProvider({
   const getOrCreateOrder = useCallback(
     (tableId: string, tableName: string, tableNumber: number): TableOrder => {
       const id = tableOrderId(tableId);
-      return stateRef.current.orders[id] ?? makeTableOrder(tableId, tableName, tableNumber);
+      return stateRef.current.orders[id] ?? makeTableOrder(tableId, tableName, tableNumber, currentGstPercent);
     },
-    []
+    [currentGstPercent]
   );
 
   const getTableOrder = useCallback(
@@ -264,7 +286,7 @@ export function TableStoreProvider({
       const now = new Date().toISOString();
       const { subtotalPaise, taxPaise, totalPaise } = computeTotals(
         newItems,
-        gstPercent,
+        existing.gstPercentAtOpen ?? currentGstPercent,
         existing.discountPaise
       );
 
@@ -282,7 +304,7 @@ export function TableStoreProvider({
       };
       await persist(updated);
     },
-    [getOrCreateOrder, gstPercent, persist]
+    [getOrCreateOrder, currentGstPercent, persist]
   );
 
   const addCartItems = useCallback(
@@ -321,7 +343,7 @@ export function TableStoreProvider({
       const now = new Date().toISOString();
       const { subtotalPaise, taxPaise, totalPaise } = computeTotals(
         newItems,
-        gstPercent,
+        existing.gstPercentAtOpen ?? currentGstPercent,
         existing.discountPaise
       );
 
@@ -339,7 +361,7 @@ export function TableStoreProvider({
       };
       await persist(updated);
     },
-    [getOrCreateOrder, gstPercent, persist]
+    [getOrCreateOrder, currentGstPercent, persist]
   );
 
   const updateItemQty = useCallback(
@@ -355,7 +377,7 @@ export function TableStoreProvider({
       const now = new Date().toISOString();
       const { subtotalPaise, taxPaise, totalPaise } = computeTotals(
         newItems,
-        gstPercent,
+        existing.gstPercentAtOpen ?? currentGstPercent,
         existing.discountPaise
       );
       const newStatus = newItems.length === 0 ? "AVAILABLE" : "OCCUPIED";
@@ -373,7 +395,7 @@ export function TableStoreProvider({
       };
       await persist(updated);
     },
-    [gstPercent, persist]
+    [currentGstPercent, persist]
   );
 
   const removeItem = useCallback(
@@ -391,7 +413,7 @@ export function TableStoreProvider({
       const now = new Date().toISOString();
       const { subtotalPaise, taxPaise, totalPaise } = computeTotals(
         existing.items,
-        gstPercent,
+        existing.gstPercentAtOpen ?? currentGstPercent,
         discountPaise
       );
 
@@ -407,7 +429,7 @@ export function TableStoreProvider({
       };
       await persist(updated);
     },
-    [gstPercent, persist]
+    [currentGstPercent, persist]
   );
 
   const holdOrder = useCallback(
