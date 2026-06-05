@@ -139,8 +139,12 @@ export default function CartPanel({ onClose }: Props) {
   const discountPaise = calcDiscount(subtotalPaise, discountType, discountValue);
   const afterDiscount = Math.max(0, subtotalPaise - discountPaise);
   const gstPercent = session?.gstPercent ?? 0;
-  const gstPaise = calcGST(afterDiscount, gstPercent);
-  const totalPaise = afterDiscount + gstPaise;
+  const gstInclusive = session?.stockSettings?.gstInclusive ?? false;
+  // P1-06: inclusive = prices include GST, extract it; exclusive = add GST on top
+  const gstPaise = gstInclusive
+    ? Math.round((afterDiscount * gstPercent) / (100 + gstPercent))
+    : calcGST(afterDiscount, gstPercent);
+  const totalPaise = gstInclusive ? afterDiscount : afterDiscount + gstPaise;
   const itemCount = cart.reduce((s, i) => s + i.qty, 0);
   const discountCapped = discountPaise >= subtotalPaise && discountValue > 0;
 
