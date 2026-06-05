@@ -6,6 +6,7 @@ import React, {
   useReducer,
   useEffect,
   useCallback,
+  useRef,
   ReactNode,
 } from "react";
 import type {
@@ -40,6 +41,18 @@ interface AppState {
   isLoading: boolean;
   toasts: Toast[];
   activeStockTab: string;
+  // Persistent UI state — restored across page loads / tab closes
+  posActiveCat: string;
+  ordersFilter: "today" | "all";
+  ordersTab: "orders" | "tables";
+  ordersTableView: "map" | "list";
+  // P0-05: sync status
+  pendingSyncCount: number;
+  isOnline: boolean;
+  // P0-11: migration error
+  migrationFailed: boolean;
+  // P1-02: inactivity lock
+  isLocked: boolean;
 }
 
 const initialState: AppState = {
@@ -54,6 +67,14 @@ const initialState: AppState = {
   isLoading: true,
   toasts: [],
   activeStockTab: "menu",
+  posActiveCat: "all",
+  ordersFilter: "today",
+  ordersTab: "orders",
+  ordersTableView: "map",
+  pendingSyncCount: 0,
+  isOnline: true,
+  migrationFailed: false,
+  isLocked: false,
 };
 
 const SESSION_KEY = "sth1r_session";
@@ -103,12 +124,13 @@ function loadSession(): UserSession | null {
 }
 
 function saveCart(cart: CartItem[]): void {
+  // P0-01: localStorage as fast-read cache only (IDB is source of truth — see AppProvider)
   try {
     localStorage.setItem(CART_KEY, JSON.stringify(cart));
   } catch {}
 }
 
-function loadCart(): CartItem[] {
+function loadCartFromLocalStorage(): CartItem[] {
   try {
     const raw = localStorage.getItem(CART_KEY);
     return raw ? (JSON.parse(raw) as CartItem[]) : [];
@@ -121,6 +143,10 @@ interface UIState {
   serviceMode: ServiceMode;
   tableNumber: number | undefined;
   activeStockTab: string;
+  posActiveCat: string;
+  ordersFilter: "today" | "all";
+  ordersTab: "orders" | "tables";
+  ordersTableView: "map" | "list";
 }
 
 function saveUI(ui: UIState): void {
@@ -132,15 +158,19 @@ function saveUI(ui: UIState): void {
 function loadUI(): UIState {
   try {
     const raw = localStorage.getItem(UI_KEY);
-    if (!raw) return { serviceMode: "dine_in", tableNumber: undefined, activeStockTab: "menu" };
+    if (!raw) return { serviceMode: "dine_in", tableNumber: undefined, activeStockTab: "menu", posActiveCat: "all", ordersFilter: "today", ordersTab: "orders", ordersTableView: "map" };
     const parsed = JSON.parse(raw) as Partial<UIState>;
     return {
       serviceMode: parsed.serviceMode ?? "dine_in",
       tableNumber: parsed.tableNumber,
       activeStockTab: parsed.activeStockTab ?? "menu",
+      posActiveCat: parsed.posActiveCat ?? "all",
+      ordersFilter: parsed.ordersFilter ?? "today",
+      ordersTab: parsed.ordersTab ?? "orders",
+      ordersTableView: parsed.ordersTableView ?? "map",
     };
   } catch {
-    return { serviceMode: "dine_in", tableNumber: undefined, activeStockTab: "menu" };
+    return { serviceMode: "dine_in", tableNumber: undefined, activeStockTab: "menu", posActiveCat: "all", ordersFilter: "today", ordersTab: "orders", ordersTableView: "map" };
   }
 }
 
@@ -228,6 +258,10 @@ type Action =
       serviceMode: ServiceMode;
       tableNumber: number | undefined;
       activeStockTab: string;
+      posActiveCat: string;
+      ordersFilter: "today" | "all";
+      ordersTab: "orders" | "tables";
+      ordersTableView: "map" | "list";
     }
   | { type: "SET_SESSION"; payload: UserSession | null }
   | { type: "SET_MENU"; items: MenuItem[]; categories: MenuCategory[] }
@@ -247,6 +281,14 @@ type Action =
   | { type: "OPEN_TABLE_UPSERT"; payload: OpenTable }
   | { type: "OPEN_TABLE_REMOVE"; id: string }
   | { type: "SET_ACTIVE_STOCK_TAB"; tab: string }
+  | { type: "SET_POS_ACTIVE_CAT"; cat: string }
+  | { type: "SET_ORDERS_FILTER"; filter: "today" | "all" }
+  | { type: "SET_ORDERS_TAB"; tab: "orders" | "tables" }
+  | { type: "SET_ORDERS_TABLE_VIEW"; view: "map" | "list" }
+  | { type: "SET_SYNC_STATUS"; pendingCount: number; isOnline: boolean }
+  | { type: "SET_MIGRATION_FAILED"; failed: boolean }
+  | { type: "SET_LOCKED"; locked: boolean }
+  | { type: "ORDER_VOID"; id: string; voidedAt: string; voidReason: string }
   | { type: "LOGOUT" };
 
 function reducer(state: AppState, action: Action): AppState {
@@ -263,6 +305,10 @@ function reducer(state: AppState, action: Action): AppState {
         serviceMode: action.serviceMode,
         tableNumber: action.tableNumber,
         activeStockTab: action.activeStockTab,
+        posActiveCat: action.posActiveCat,
+        ordersFilter: action.ordersFilter,
+        ordersTab: action.ordersTab,
+        ordersTableView: action.ordersTableView,
         isLoading: false,
       };
     case "SET_SESSION":
@@ -275,6 +321,29 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, tableNumber: action.tableNumber };
     case "SET_ACTIVE_STOCK_TAB":
       return { ...state, activeStockTab: action.tab };
+    case "SET_POS_ACTIVE_CAT":
+      return { ...state, posActiveCat: action.cat };
+    case "SET_ORDERS_FILTER":
+      return { ...state, ordersFilter: action.filter };
+    case "SET_ORDERS_TAB":
+      return { ...state, ordersTab: action.tab };
+    case "SET_ORDERS_TABLE_VIEW":
+      return { ...state, ordersTableView: action.view };
+    case "SET_SYNC_STATUS":
+      return { ...state, pendingSyncCount: action.pendingCount, isOnline: action.isOnline };
+    case "SET_MIGRATION_FAILED":
+      return { ...state, migrationFailed: action.failed };
+    case "SET_LOCKED":
+      return { ...state, isLocked: action.locked };
+    case "ORDER_VOID":
+      return {
+        ...state,
+        orders: state.orders.map((o) =>
+          o.id === action.id
+            ? { ...o, status: "voided" as const, voidedAt: action.voidedAt, voidReason: action.voidReason, syncStatus: "pending" as const }
+            : o
+        ),
+      };
     case "CART_ADD": {
       const inc = action.payload;
       const key = [
@@ -395,6 +464,12 @@ interface AppContextValue {
     }
   ) => Promise<Order>;
   setActiveStockTab: (tab: string) => void;
+  setPosActiveCat: (cat: string) => void;
+  setOrdersFilter: (filter: "today" | "all") => void;
+  setOrdersTab: (tab: "orders" | "tables") => void;
+  setOrdersTableView: (view: "map" | "list") => void;
+  voidOrder: (id: string, reason?: string) => Promise<void>;
+  unlockSession: () => void;
   /** FIX #2: Notify AppContext that an order was placed from an external path (e.g. table checkout).
    * Dispatches ORDER_ADD so the Orders page revenue counter updates without a full reload. */
   notifyOrderPlaced: (order: Order) => void;
@@ -415,13 +490,41 @@ async function loadUserData(uid: string) {
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
+  const inactivityTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const INACTIVITY_MS = 15 * 60 * 1000; // P1-02: 15 min
+
+  // P1-02: Reset inactivity timer on any user interaction
+  const resetInactivityTimer = useCallback(() => {
+    if (!state.session) return;
+    if (inactivityTimer.current) clearTimeout(inactivityTimer.current);
+    inactivityTimer.current = setTimeout(() => {
+      dispatch({ type: "SET_LOCKED", locked: true });
+    }, INACTIVITY_MS);
+  }, [state.session]);
+
+  useEffect(() => {
+    if (!state.session || state.isLoading) return;
+    const events = ["click", "keydown", "touchstart", "mousemove"];
+    events.forEach((e) => window.addEventListener(e, resetInactivityTimer, { passive: true }));
+    resetInactivityTimer();
+    return () => {
+      events.forEach((e) => window.removeEventListener(e, resetInactivityTimer));
+      if (inactivityTimer.current) clearTimeout(inactivityTimer.current);
+    };
+  }, [state.session, state.isLoading, resetInactivityTimer]);
 
   useEffect(() => {
     async function init() {
       try {
         const session = loadSession();
-        const cart = loadCart();
         const ui = loadUI();
+
+        // P0-11: surface migration failures
+        const { getMigrationStatus } = await import("@/lib/db");
+        const migStatus = getMigrationStatus();
+        if (migStatus === "failed") {
+          dispatch({ type: "SET_MIGRATION_FAILED", failed: true });
+        }
 
         if (!session) {
           dispatch({
@@ -432,9 +535,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
             serviceMode: ui.serviceMode,
             tableNumber: ui.tableNumber,
             activeStockTab: ui.activeStockTab,
+            posActiveCat: ui.posActiveCat,
+            ordersFilter: ui.ordersFilter,
+            ordersTab: ui.ordersTab,
+            ordersTableView: ui.ordersTableView,
           });
           return;
         }
+
+        // P0-01: load cart from IDB first, fall back to localStorage cache
+        const { dbLoadCart } = await import("@/lib/db");
+        const idbCart = await dbLoadCart(session.userId);
+        const cart = idbCart.length > 0 ? idbCart : loadCartFromLocalStorage();
 
         const { items, categories, orders, openTables } = await loadUserData(session.userId);
 
@@ -444,18 +556,44 @@ export function AppProvider({ children }: { children: ReactNode }) {
           serviceMode: ui.serviceMode,
           tableNumber: ui.tableNumber,
           activeStockTab: ui.activeStockTab,
+          posActiveCat: ui.posActiveCat,
+          ordersFilter: ui.ordersFilter,
+          ordersTab: ui.ordersTab,
+          ordersTableView: ui.ordersTableView,
         });
 
+        // P0-03: restore menu from Supabase if IDB is empty (device wipe scenario)
+        if (items.length === 0) {
+          import("@/lib/supabase/sync")
+            .then(({ restoreMenuFromSupabase }) => restoreMenuFromSupabase(session.userId))
+            .catch(() => {});
+        }
+
+        // P0-04: start sync listeners (reconnect + 60s interval)
         import("@/lib/supabase/sync")
-          .then(({ backgroundSync }) => backgroundSync(session.userId))
+          .then(({ backgroundSync, startSyncListeners, subscribeSyncStatus }) => {
+            backgroundSync(session.userId);
+            startSyncListeners(session.userId);
+            subscribeSyncStatus(() => {
+              import("@/lib/supabase/sync").then(({ getSyncStatus }) => {
+                const { pendingCount, isOnline } = getSyncStatus();
+                dispatch({ type: "SET_SYNC_STATUS", pendingCount, isOnline });
+              });
+            });
+          })
           .catch(() => {});
 
-        // Restore table orders from Supabase
         import("@/lib/supabase/tableSync")
           .then(({ restoreTableOrdersFromSupabase }) =>
             restoreTableOrdersFromSupabase(session.userId)
           )
           .catch(() => {});
+
+        // P0-03: sync menu to Supabase
+        import("@/lib/supabase/sync")
+          .then(({ syncMenu }) => syncMenu(session.userId))
+          .catch(() => {});
+
       } catch {
         dispatch({
           type: "INIT_DONE",
@@ -465,15 +603,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
           serviceMode: "dine_in",
           tableNumber: undefined,
           activeStockTab: "menu",
+          posActiveCat: "all",
+          ordersFilter: "today",
+          ordersTab: "orders",
+          ordersTableView: "map",
         });
       }
     }
     init();
   }, []);
 
+  // P0-01: persist cart to IDB (source of truth) + localStorage (fast cache)
   useEffect(() => {
-    if (!state.isLoading) saveCart(state.cart);
-  }, [state.cart, state.isLoading]);
+    if (state.isLoading || !state.session) return;
+    const uid = state.session.userId;
+    saveCart(state.cart); // localStorage fast cache
+    import("@/lib/db")
+      .then(({ dbSaveCart }) => dbSaveCart(state.cart, uid))
+      .catch(() => {});
+  }, [state.cart, state.session, state.isLoading]);
 
   useEffect(() => {
     if (!state.isLoading)
@@ -481,8 +629,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         serviceMode: state.serviceMode,
         tableNumber: state.tableNumber,
         activeStockTab: state.activeStockTab,
+        posActiveCat: state.posActiveCat,
+        ordersFilter: state.ordersFilter,
+        ordersTab: state.ordersTab,
+        ordersTableView: state.ordersTableView,
       });
-  }, [state.serviceMode, state.tableNumber, state.activeStockTab, state.isLoading]);
+  }, [state.serviceMode, state.tableNumber, state.activeStockTab, state.posActiveCat, state.ordersFilter, state.ordersTab, state.ordersTableView, state.isLoading]);
 
   useEffect(() => {
     if (!state.isLoading) saveSession(state.session);
@@ -491,8 +643,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (session: UserSession) => {
     saveSession(session);
     try {
-      const cart = loadCart();
       const ui = loadUI();
+      const { dbLoadCart } = await import("@/lib/db");
+      const idbCart = await dbLoadCart(session.userId);
+      const cart = idbCart.length > 0 ? idbCart : loadCartFromLocalStorage();
       const { items, categories, orders, openTables } = await loadUserData(session.userId);
       await syncOpenTablesFromSupabase(session.userId).catch(() => {});
       const restoredSession = await restoreSessionFromSupabase(session);
@@ -502,11 +656,34 @@ export function AppProvider({ children }: { children: ReactNode }) {
         serviceMode: ui.serviceMode,
         tableNumber: ui.tableNumber,
         activeStockTab: ui.activeStockTab,
+        posActiveCat: ui.posActiveCat,
+        ordersFilter: ui.ordersFilter,
+        ordersTab: ui.ordersTab,
+        ordersTableView: ui.ordersTableView,
       });
       saveSession(restoredSession);
+
+      // P0-03: restore menu if empty, then sync
+      if (items.length === 0) {
+        import("@/lib/supabase/sync")
+          .then(({ restoreMenuFromSupabase }) => restoreMenuFromSupabase(restoredSession.userId))
+          .catch(() => {});
+      }
+
       import("@/lib/supabase/sync")
-        .then(({ backgroundSync }) => backgroundSync(restoredSession.userId))
+        .then(({ backgroundSync, startSyncListeners, subscribeSyncStatus, syncMenu }) => {
+          backgroundSync(restoredSession.userId);
+          startSyncListeners(restoredSession.userId);
+          syncMenu(restoredSession.userId);
+          subscribeSyncStatus(() => {
+            import("@/lib/supabase/sync").then(({ getSyncStatus }) => {
+              const { pendingCount, isOnline } = getSyncStatus();
+              dispatch({ type: "SET_SYNC_STATUS", pendingCount, isOnline });
+            });
+          });
+        })
         .catch(() => {});
+
       import("@/lib/supabase/tableSync")
         .then(({ restoreTableOrdersFromSupabase }) =>
           restoreTableOrdersFromSupabase(restoredSession.userId)
@@ -521,6 +698,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
         serviceMode: "dine_in",
         tableNumber: undefined,
         activeStockTab: "menu",
+        posActiveCat: "all",
+        ordersFilter: "today",
+        ordersTab: "orders",
+        ordersTableView: "map",
       });
     }
   }, []);
@@ -530,6 +711,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
       localStorage.removeItem(SESSION_KEY);
       localStorage.removeItem(CART_KEY);
       localStorage.removeItem(UI_KEY);
+    } catch {}
+    // P0-01: clear IDB cart on logout
+    try {
+      const session = loadSession();
+      if (session) {
+        const { dbClearCart } = await import("@/lib/db");
+        await dbClearCart(session.userId);
+      }
     } catch {}
     try {
       const { signOut } = await import("@/lib/supabase/auth");
@@ -556,6 +745,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
     (tab: string) => dispatch({ type: "SET_ACTIVE_STOCK_TAB", tab }),
     []
   );
+  const setPosActiveCat = useCallback(
+    (cat: string) => dispatch({ type: "SET_POS_ACTIVE_CAT", cat }),
+    []
+  );
+  const setOrdersFilter = useCallback(
+    (filter: "today" | "all") => dispatch({ type: "SET_ORDERS_FILTER", filter }),
+    []
+  );
+  const setOrdersTab = useCallback(
+    (tab: "orders" | "tables") => dispatch({ type: "SET_ORDERS_TAB", tab }),
+    []
+  );
+  const setOrdersTableView = useCallback(
+    (view: "map" | "list") => dispatch({ type: "SET_ORDERS_TABLE_VIEW", view }),
+    []
+  );
+
+  // P1-02: unlock after PIN entry
+  const unlockSession = useCallback(() => {
+    dispatch({ type: "SET_LOCKED", locked: false });
+    resetInactivityTimer();
+  }, [resetInactivityTimer]);
 
   const loadMenuFromTemplate = useCallback(
     async (businessType: string, userId: string) => {
@@ -567,6 +778,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       await db.dbBulkSaveCategories(template.categories, userId);
       await db.dbBulkSaveMenuItems(template.items, userId);
       dispatch({ type: "SET_MENU", items: template.items, categories: template.categories });
+      // P0-03: also sync new menu to Supabase
+      import("@/lib/supabase/sync")
+        .then(({ syncMenu }) => syncMenu(userId))
+        .catch(() => {});
     },
     []
   );
@@ -609,9 +824,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const totalPaise = afterDiscount + gstPaise;
       const changePaise = cashReceivedPaise ? Math.max(0, cashReceivedPaise - totalPaise) : 0;
 
+      // P0-02: use Supabase atomic counter, fall back to local generateBillNumber
+      let billNumber = generateBillNumber();
+      try {
+        const { getNextBillCounterFromSupabase } = await import("@/lib/supabase/sync");
+        const remote = await getNextBillCounterFromSupabase();
+        if (remote !== null) billNumber = `#${String(remote).padStart(4, "0")}`;
+      } catch {}
+
       const order: Order = {
         id: crypto.randomUUID(),
-        billNumber: generateBillNumber(),
+        billNumber,
         items: snap,
         serviceMode: state.serviceMode,
         tableNumber: state.tableNumber,
@@ -628,6 +851,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         changePaise,
         createdAt: new Date().toISOString(),
         syncStatus: "pending",
+        status: "completed",
       };
 
       const uid = state.session?.userId ?? "default";
@@ -643,6 +867,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return order;
     },
     [state.cart, state.session, state.serviceMode, state.tableNumber]
+  );
+
+  // P0-09: void order
+  const voidOrder = useCallback(
+    async (id: string, reason = "") => {
+      const uid = state.session?.userId ?? "default";
+      const voidedAt = new Date().toISOString();
+      const db = await import("@/lib/db");
+      await db.dbVoidOrder(id, uid, reason);
+      dispatch({ type: "ORDER_VOID", id, voidedAt, voidReason: reason });
+      // sync void to Supabase
+      const voided = state.orders.find((o) => o.id === id);
+      if (voided) {
+        import("@/lib/supabase/sync")
+          .then(({ syncOrder }) => syncOrder({ ...voided, status: "voided", voidedAt, voidReason: reason, syncStatus: "pending" }))
+          .catch(() => {});
+      }
+    },
+    [state.orders, state.session]
   );
 
   const holdToTable = useCallback(
@@ -706,9 +949,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const totalPaise = afterDiscount + gstPaise;
       const changePaise = cashReceivedPaise ? Math.max(0, cashReceivedPaise - totalPaise) : 0;
 
+      let billNumber = generateBillNumber();
+      try {
+        const { getNextBillCounterFromSupabase } = await import("@/lib/supabase/sync");
+        const remote = await getNextBillCounterFromSupabase();
+        if (remote !== null) billNumber = `#${String(remote).padStart(4, "0")}`;
+      } catch {}
+
       const order: Order = {
         id: crypto.randomUUID(),
-        billNumber: generateBillNumber(),
+        billNumber,
         items: tab.items,
         serviceMode: "dine_in",
         tableNumber: tab.tableNumber,
@@ -717,6 +967,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         paymentMethod, splitPayment, cashReceivedPaise, changePaise,
         createdAt: new Date().toISOString(),
         syncStatus: "pending",
+        status: "completed",
       };
 
       const uid = state.session?.userId ?? "default";
@@ -739,8 +990,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     async (item: MenuItem) => {
       const uid = state.session?.userId ?? "default";
       const db = await import("@/lib/db");
-      await db.dbSaveMenuItem(item, uid);
-      dispatch({ type: "MENU_ITEM_UPSERT", payload: item });
+      const itemWithTs = { ...item, updatedAt: new Date().toISOString() };
+      await db.dbSaveMenuItem(itemWithTs, uid);
+      dispatch({ type: "MENU_ITEM_UPSERT", payload: itemWithTs });
+      // P0-03: sync to Supabase
+      import("@/lib/supabase/sync")
+        .then(({ syncMenu }) => syncMenu(uid))
+        .catch(() => {});
     },
     [state.session]
   );
@@ -751,6 +1007,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const db = await import("@/lib/db");
       await db.dbDeleteMenuItem(id, uid);
       dispatch({ type: "MENU_ITEM_DELETE", id });
+      import("@/lib/supabase/sync")
+        .then(({ syncMenu }) => syncMenu(uid))
+        .catch(() => {});
     },
     [state.session]
   );
@@ -759,8 +1018,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     async (cat: MenuCategory) => {
       const uid = state.session?.userId ?? "default";
       const db = await import("@/lib/db");
-      await db.dbSaveCategory(cat, uid);
-      dispatch({ type: "CATEGORY_UPSERT", payload: cat });
+      const catWithTs = { ...cat, updatedAt: new Date().toISOString() };
+      await db.dbSaveCategory(catWithTs, uid);
+      dispatch({ type: "CATEGORY_UPSERT", payload: catWithTs });
+      import("@/lib/supabase/sync")
+        .then(({ syncMenu }) => syncMenu(uid))
+        .catch(() => {});
     },
     [state.session]
   );
@@ -771,6 +1034,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const db = await import("@/lib/db");
       await db.dbDeleteCategory(id, uid);
       dispatch({ type: "CATEGORY_DELETE", id });
+      import("@/lib/supabase/sync")
+        .then(({ syncMenu }) => syncMenu(uid))
+        .catch(() => {});
     },
     [state.session]
   );
@@ -784,8 +1050,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     []
   );
 
-  // FIX #2: lets external checkout flows (e.g. /tables/[tableId]) add an order
-  // to AppContext state so the Orders page revenue counter updates immediately.
   const notifyOrderPlaced = useCallback(
     (order: Order) => {
       dispatch({ type: "ORDER_ADD", payload: order });
@@ -806,6 +1070,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         showToast,
         openTableAddItems, closeTable,
         setActiveStockTab,
+        setPosActiveCat,
+        setOrdersFilter,
+        setOrdersTab,
+        setOrdersTableView,
+        voidOrder,
+        unlockSession,
         notifyOrderPlaced,
       }}
     >
