@@ -426,7 +426,7 @@ export default function DashboardPage() {
                     `TOTAL        : ${(todaySales / 100).toFixed(2)}`,
                     ``,
                     `Printed ${new Date().toLocaleTimeString("en-IN")}`,
-                  ].filter((l) => l !== null).join("\n");
+                  ].filter((l): l is string => l !== null);
                   const w = window.open("", "_blank", "width=320,height=500");
                   if (!w) return;
                   w.document.write(
