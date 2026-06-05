@@ -43,6 +43,21 @@ export const calcGST = (afterDiscountPaise: number, pct: number): number => {
   return Math.round((afterDiscountPaise * pct) / 100);
 };
 
+/**
+ * P1-06: GST-inclusive extraction.
+ * When prices include GST (MRP), extract the GST component:
+ * GST = total × (pct / (100 + pct))
+ * Taxable = total - GST
+ */
+export const extractGSTFromInclusive = (
+  inclusivePaise: number,
+  pct: number
+): { taxPaise: number; taxablePaise: number } => {
+  if (!pct || pct <= 0) return { taxPaise: 0, taxablePaise: inclusivePaise };
+  const taxPaise = Math.round((inclusivePaise * pct) / (100 + pct));
+  return { taxPaise, taxablePaise: inclusivePaise - taxPaise };
+};
+
 // ── Sequential bill number — GST-compliant ────────────────────────────────────
 // Format: STH-FY26-000001-<deviceSuffix>
 // FY = Indian financial year ending, Apr–Mar. Resets each new FY.
