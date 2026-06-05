@@ -739,6 +739,7 @@ function CheckoutSheet({
   const [splitUpi, setSplitUpi] = useState("");
   const [upiConfirmed, setUpiConfirmed] = useState(false);
   const [placing, setPlacing] = useState(false);
+  const placingRef = useRef(false); // P0-06: ref guard against double-tap
   const [placedOrder, setPlacedOrder] = useState<Order | null>(null);
   const [qrSrc, setQrSrc] = useState("");
   const [qrLoading, setQrLoading] = useState(false);
@@ -782,15 +783,35 @@ function CheckoutSheet({
   }, [showUpiQr, hasUpi, totalPaise, upiId, businessName]);
 
   const handleConfirm = async () => {
-    if (!canConfirm || !order) return;
+    if (!canConfirm || !order || placingRef.current) return;
+    placingRef.current = true; // P0-06: block concurrent taps
     setPlacing(true);
     try {
       const uid = appState.session?.userId ?? "default";
 
+      // P1-05: re-read from IDB at close time — never trust stale React state for billing
+      const { dbGetTableOrder } = await import("@/lib/db");
+      const freshOrder = await dbGetTableOrder(order.id, uid);
+      const billing = freshOrder ?? order;
+      const freshItems = billing.items;
+      const freshSubtotal = billing.subtotalPaise;
+      const freshTax = billing.taxPaise;
+      const freshDiscount = billing.discountPaise;
+      const freshTotal = billing.totalPaise;
+      // P0-08: use locked GST rate from when table was opened
+      const lockedGst = billing.gstPercentAtOpen ?? gstPercent;
+
+      let billNumber = generateBillNumber();
+      try {
+        const { getNextBillCounterFromSupabase } = await import("@/lib/supabase/sync");
+        const remote = await getNextBillCounterFromSupabase();
+        if (remote !== null) billNumber = `#${String(remote).padStart(4, "0")}`;
+      } catch {}
+
       const finalOrder: Order = {
         id: crypto.randomUUID(),
-        billNumber: generateBillNumber(),
-        items: items.map((i) => ({
+        billNumber,
+        items: freshItems.map((i) => ({
           cartId: i.cartId,
           menuItemId: i.menuItemId,
           name: i.name,
@@ -804,16 +825,15 @@ function CheckoutSheet({
         })),
         serviceMode: "dine_in",
         tableNumber,
-        subtotalPaise,
-        discountPaise,
-        // FIX #16: preserve the actual discount type instead of always recording "flat"
+        subtotalPaise: freshSubtotal,
+        discountPaise: freshDiscount,
         discountType: checkoutDiscountType,
         discountValue: checkoutDiscountType === "percent"
           ? checkoutDiscountPercent
-          : discountPaise / 100,
-        gstPercent,
-        gstPaise: taxPaise,
-        totalPaise,
+          : freshDiscount / 100,
+        gstPercent: lockedGst,
+        gstPaise: freshTax,
+        totalPaise: freshTotal,
         paymentMethod: method,
         splitPayment:
           method === "split"
@@ -823,24 +843,22 @@ function CheckoutSheet({
         changePaise: method === "cash" ? changePaise : 0,
         createdAt: new Date().toISOString(),
         syncStatus: "pending",
+        status: "completed",
       };
 
       const { dbSaveOrder } = await import("@/lib/db");
       await dbSaveOrder(finalOrder, uid);
 
-      // FIX #2: notify AppContext so Orders page revenue counter updates immediately
       notifyOrderPlaced(finalOrder);
-
-      // Clear table order
       await clearOrder(tableId);
 
-      // Sync to Supabase
       import("@/lib/supabase/sync")
         .then(({ syncOrder }) => syncOrder(finalOrder))
         .catch(() => {});
 
       setPlacedOrder(finalOrder);
     } catch {
+      placingRef.current = false;
       setPlacing(false);
     }
   };
