@@ -13,11 +13,11 @@ import { fmtRupee, calcGST, calcDiscount } from "@/lib/utils";
 import { Search, X } from "lucide-react";
 
 export default function POSPage() {
-  const { state } = useApp();
+  const { state, setPosActiveCat } = useApp();
   const router = useRouter();
-  const { menuItems, categories, session, cart, isLoading } = state;
+  const { menuItems, categories, session, cart, isLoading, posActiveCat } = state;
 
-  const [activeCat, setActiveCat] = useState<string>("all");
+  const activeCat = posActiveCat;
   const [configItem, setConfigItem] = useState<MenuItem | null>(null);
   const [search, setSearch] = useState("");
   const [cartOpen, setCartOpen] = useState(false);
@@ -46,7 +46,7 @@ export default function POSPage() {
   const cartCount = cart.reduce((s, i) => s + i.qty, 0);
 
   const scrollCatIntoView = (id: string) => {
-    setActiveCat(id);
+    setPosActiveCat(id);
     document
       .getElementById(`pill-${id}`)
       ?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
