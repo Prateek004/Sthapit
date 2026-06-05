@@ -5,6 +5,7 @@ export type UserRole = "owner" | "cashier";
 export type ServiceMode = "dine_in" | "takeaway" | "delivery";
 export type PaymentMethod = "cash" | "upi" | "split";
 export type TableStatus = "AVAILABLE" | "OCCUPIED";
+export type OrderStatus = "completed" | "voided" | "refunded";
 
 export interface StockSettings {
   tablesEnabled: boolean;
@@ -13,6 +14,7 @@ export interface StockSettings {
   tableCount: number;
   openTableBilling?: boolean;
   activeTab?: string;
+  gstInclusive?: boolean; // P1-06: true = prices include GST (MRP-inclusive), false = GST added on top
 }
 
 export interface UserSession {
@@ -24,6 +26,7 @@ export interface UserSession {
   gstPercent: number;
   upiId?: string;
   stockSettings?: StockSettings;
+  loggedInAt?: string; // P1-02: for inactivity lock
 }
 
 export interface BusinessProfile {
@@ -57,12 +60,14 @@ export interface MenuItem {
   portionEnabled?: boolean;
   portions?: { label: string; pricePaise: number }[];
   fastAdd?: boolean;
+  updatedAt?: string; // for menu sync
 }
 
 export interface MenuCategory {
   id: string;
   name: string;
   sortOrder: number;
+  updatedAt?: string; // for menu sync
 }
 
 export interface RawMaterial {
@@ -93,7 +98,7 @@ export interface CartItem {
   cartId: string;
   menuItemId: string;
   name: string;
-  unitPricePaise: number;
+  unitPricePaise: number; // CONTRACT: base menu price ONLY, never includes add-ons
   qty: number;
   tableNumber?: number;
   selectedSize?: string;
@@ -126,6 +131,10 @@ export interface Order {
   changePaise?: number;
   createdAt: string;
   syncStatus: "pending" | "synced" | "failed";
+  // P0-09: void/refund
+  status?: OrderStatus;
+  voidedAt?: string;
+  voidReason?: string;
 }
 
 // Legacy — kept for backward compat with existing Dexie store
@@ -142,7 +151,7 @@ export interface TableOrderItem {
   cartId: string;
   menuItemId: string;
   name: string;
-  unitPricePaise: number;
+  unitPricePaise: number; // CONTRACT: base menu price ONLY
   qty: number;
   selectedSize?: string;
   selectedPortion?: string;
@@ -168,6 +177,8 @@ export interface TableOrder {
   /** For optimistic concurrency — increment on every write */
   version: number;
   syncStatus: "pending" | "synced" | "failed";
+  /** P0-08: GST rate locked at table-open time. Rate changes never retroactively alter open tables. */
+  gstPercentAtOpen?: number;
 }
 
 export interface RestaurantTable {
@@ -176,5 +187,13 @@ export interface RestaurantTable {
   tableNumber: number;
   status: TableStatus;
   activeOrderId: string | null;
+  updatedAt: string;
+}
+
+// P0-01: Persisted cart record in IndexedDB
+export interface PersistedCart {
+  id: string;    // always "active_cart"
+  _uid: string;
+  items: CartItem[];
   updatedAt: string;
 }
