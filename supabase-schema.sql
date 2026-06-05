@@ -92,3 +92,82 @@ CREATE POLICY "table_orders_self" ON table_orders
 
 CREATE INDEX IF NOT EXISTS table_orders_user_idx    ON table_orders (user_id, table_id);
 CREATE INDEX IF NOT EXISTS table_orders_status_idx  ON table_orders (user_id, status);
+
+-- ── Schema additions for production fixes ────────────────────────────────────
+
+-- P0-02: Atomic bill counter per user (prevents duplicate bill numbers)
+CREATE TABLE IF NOT EXISTS bill_counters (
+  user_id   UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  counter   INTEGER NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE bill_counters ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "bill_counters_self" ON bill_counters
+  FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+
+-- Atomic increment function (called by client via sb.rpc())
+CREATE OR REPLACE FUNCTION increment_bill_counter(p_user_id UUID)
+RETURNS INTEGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  next_val INTEGER;
+BEGIN
+  INSERT INTO bill_counters (user_id, counter)
+  VALUES (p_user_id, 1)
+  ON CONFLICT (user_id) DO UPDATE
+    SET counter = bill_counters.counter + 1,
+        updated_at = now()
+  RETURNING counter INTO next_val;
+  RETURN next_val;
+END;
+$$;
+
+-- P0-03: Menu items table (synced from client IDB)
+CREATE TABLE IF NOT EXISTS menu_items (
+  id               UUID PRIMARY KEY,
+  user_id          UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  name             TEXT NOT NULL,
+  category_id      TEXT NOT NULL,
+  price_paise      INTEGER NOT NULL DEFAULT 0,
+  cost_price_paise INTEGER,
+  is_veg           BOOLEAN NOT NULL DEFAULT true,
+  is_available     BOOLEAN NOT NULL DEFAULT true,
+  add_ons          JSONB NOT NULL DEFAULT '[]',
+  sizes            JSONB,
+  portion_enabled  BOOLEAN NOT NULL DEFAULT false,
+  portions         JSONB,
+  fast_add         BOOLEAN NOT NULL DEFAULT false,
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE menu_items ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "menu_items_self" ON menu_items
+  FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+CREATE INDEX IF NOT EXISTS menu_items_user_idx ON menu_items (user_id);
+
+-- P0-03: Menu categories table
+CREATE TABLE IF NOT EXISTS menu_categories (
+  id         UUID PRIMARY KEY,
+  user_id    UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  name       TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE menu_categories ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "menu_categories_self" ON menu_categories
+  FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+CREATE INDEX IF NOT EXISTS menu_categories_user_idx ON menu_categories (user_id);
+
+-- P0-08 / P1-01: Add gst_percent_at_open to table_orders (already exists, alter to add col)
+ALTER TABLE table_orders ADD COLUMN IF NOT EXISTS gst_percent_at_open NUMERIC;
+
+-- P0-09: Add status / void fields to orders
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'completed'
+  CHECK (status IN ('completed', 'voided', 'refunded'));
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS voided_at TIMESTAMPTZ;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS void_reason TEXT;
+CREATE INDEX IF NOT EXISTS orders_status_idx ON orders (user_id, status, created_at DESC);
+
+-- P1-01: Enable Realtime for table_orders
+ALTER PUBLICATION supabase_realtime ADD TABLE table_orders;
