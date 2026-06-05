@@ -29,6 +29,7 @@ export default function SettingsPage() {
 
   const [gst, setGst] = useState(session?.gstPercent ?? 5);
   const [upiId, setUpiId] = useState(session?.upiId ?? "");
+  const [gstInclusive, setGstInclusive] = useState(ss.gstInclusive ?? false); // P1-06
   const [tablesEnabled, setTablesEnabled] = useState(ss.tablesEnabled);
   const [kotEnabled, setKotEnabled] = useState(ss.kotEnabled);
   const [barEnabled, setBarEnabled] = useState(ss.barEnabled);
@@ -47,13 +48,14 @@ export default function SettingsPage() {
       setBarEnabled(s.barEnabled);
       setTableCount(s.tableCount);
       setOpenTableBilling(s.openTableBilling ?? false);
+      setGstInclusive(s.gstInclusive ?? false); // P1-06
     }
   }, [session?.userId]);
 
   const handleSave = async () => {
     if (!session) return;
     setSaving(true);
-    const stockSettings: StockSettings = { tablesEnabled, kotEnabled, barEnabled, tableCount, openTableBilling };
+    const stockSettings: StockSettings = { tablesEnabled, kotEnabled, barEnabled, tableCount, openTableBilling, gstInclusive };
     const updated = { ...session, gstPercent: gst, upiId: upiId.trim() || undefined, stockSettings };
     setSession(updated);
     if (isSupabaseEnabled()) {
@@ -154,6 +156,35 @@ export default function SettingsPage() {
                   </button>
                 ))}
               </div>
+              {/* P1-06: GST inclusive/exclusive toggle */}
+              {gst > 0 && (
+                <div style={{ marginTop: 12, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: "#1C1410" }}>
+                      {gstInclusive ? "GST Inclusive (MRP)" : "GST Exclusive (+ GST)"}
+                    </div>
+                    <div style={{ fontSize: 11, color: "#9C8E87" }}>
+                      {gstInclusive
+                        ? "Prices shown already include GST — GST extracted on bill"
+                        : "GST added on top of menu prices at checkout"}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setGstInclusive(!gstInclusive)}
+                    style={{
+                      width: 44, height: 24, borderRadius: 12, border: "none", cursor: "pointer",
+                      background: gstInclusive ? "#E8590C" : "rgba(28,20,16,0.15)",
+                      position: "relative", transition: "background 0.2s", flexShrink: 0,
+                    }}
+                  >
+                    <div style={{
+                      position: "absolute", top: 3, left: gstInclusive ? 22 : 3,
+                      width: 18, height: 18, borderRadius: "50%", background: "white",
+                      transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
+                    }} />
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* UPI */}
