@@ -12,7 +12,7 @@ import {
   TrendingUp, Banknote, ShoppingBag, Cloud, CloudOff,
   RefreshCw, ChevronDown, ChevronUp, Plus, CheckCircle, Clock,
   Printer, MessageCircle, CheckCircle2, X, Loader2, QrCode,
-  Smartphone, ClipboardList, LayoutGrid, List,
+  Smartphone, ClipboardList, LayoutGrid, List, XCircle, AlertTriangle,
 } from "lucide-react";
 import { isSupabaseEnabled } from "@/lib/supabase/client";
 
@@ -983,13 +983,13 @@ function AddItemsModal({
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 export default function OrdersPage() {
-  const { state, openTableAddItems, showToast } = useApp();
+  const { state, openTableAddItems, showToast, setOrdersFilter, setOrdersTab, setOrdersTableView, voidOrder } = useApp();
   const uid = state.session?.userId ?? "default";
 
   const [allOrders, setAllOrders]     = useState<Order[]>([]);
-  const [filter, setFilter]           = useState<"today" | "all">("today");
-  const [tab, setTab]                 = useState<"orders" | "tables">("orders");
-  const [tableView, setTableView]     = useState<"map" | "list">("map");
+  const filter      = state.ordersFilter;
+  const tab         = state.ordersTab;
+  const tableView   = state.ordersTableView;
   const [syncing, setSyncing]         = useState(false);
   const [expanded, setExpanded]       = useState<string | null>(null);
   const [addingTo, setAddingTo]       = useState<OpenTable | null>(null);
@@ -1011,8 +1011,9 @@ export default function OrdersPage() {
   const today       = todayStr();
   const todayOrders = allOrders.filter((o) => o.createdAt.startsWith(today));
   const displayed   = filter === "today" ? todayOrders : allOrders;
-  const todaySales  = todayOrders.reduce((s, o) => s + o.totalPaise, 0);
-  const totalSales  = allOrders.reduce((s, o) => s + o.totalPaise, 0);
+  // P1-07: exclude voided orders from all revenue calculations
+  const todaySales  = todayOrders.filter((o) => o.status !== "voided").reduce((s, o) => s + o.totalPaise, 0);
+  const totalSales  = allOrders.filter((o) => o.status !== "voided").reduce((s, o) => s + o.totalPaise, 0);
 
   const handleSync = async () => {
     setSyncing(true);
@@ -1045,6 +1046,34 @@ export default function OrdersPage() {
     <AppShell>
       <div className="min-h-screen bg-gray-50">
 
+        {/* P0-11: Migration error banner */}
+        {state.migrationFailed && (
+          <div className="bg-red-50 border-b border-red-200 px-4 py-2 flex items-center gap-2">
+            <AlertTriangle size={14} className="text-red-500 shrink-0" />
+            <p className="text-xs text-red-700 font-medium">
+              Data migration failed — some historical data may not have transferred. Exports and new orders are safe.
+            </p>
+          </div>
+        )}
+
+        {/* P0-05: Sync status banner */}
+        {!state.isOnline && (
+          <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center gap-2">
+            <CloudOff size={14} className="text-amber-500 shrink-0" />
+            <p className="text-xs text-amber-700 font-medium">
+              Offline — orders saved locally, will sync when reconnected
+            </p>
+          </div>
+        )}
+        {state.isOnline && state.pendingSyncCount > 0 && (
+          <div className="bg-blue-50 border-b border-blue-200 px-4 py-2 flex items-center gap-2">
+            <RefreshCw size={14} className="text-blue-500 shrink-0 animate-spin" />
+            <p className="text-xs text-blue-700 font-medium">
+              Syncing {state.pendingSyncCount} pending order{state.pendingSyncCount > 1 ? "s" : ""}…
+            </p>
+          </div>
+        )}
+
         {/* ── Header ── */}
         <div className="bg-white px-4 lg:px-8 pt-12 lg:pt-6 pb-4 shadow-sm">
           <div className="flex items-center justify-between">
@@ -1066,7 +1095,7 @@ export default function OrdersPage() {
               {(["orders", "tables"] as const).map((t) => (
                 <button
                   key={t}
-                  onClick={() => setTab(t)}
+                  onClick={() => setOrdersTab(t)}
                   className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${
                     tab === t
                       ? "bg-white text-gray-900 shadow-sm"
@@ -1101,7 +1130,7 @@ export default function OrdersPage() {
                   {/* View toggle */}
                   <div className="flex items-center justify-end gap-1.5">
                     <button
-                      onClick={() => setTableView("map")}
+                      onClick={() => setOrdersTableView("map")}
                       className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all press ${
                         tableView === "map"
                           ? "bg-primary-500 text-white border-primary-500"
@@ -1112,7 +1141,7 @@ export default function OrdersPage() {
                       Map
                     </button>
                     <button
-                      onClick={() => setTableView("list")}
+                      onClick={() => setOrdersTableView("list")}
                       className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all press ${
                         tableView === "list"
                           ? "bg-primary-500 text-white border-primary-500"
@@ -1263,7 +1292,7 @@ export default function OrdersPage() {
                 {(["today", "all"] as const).map((f) => (
                   <button
                     key={f}
-                    onClick={() => setFilter(f)}
+                    onClick={() => setOrdersFilter(f)}
                     className={`flex-1 py-2 rounded-xl text-sm font-bold transition-all ${
                       filter === f
                         ? "bg-white text-gray-900 shadow-sm"
@@ -1303,6 +1332,12 @@ export default function OrdersPage() {
                             {order.tableNumber && (
                               <span className="text-[10px] font-bold bg-primary-50 text-primary-600 px-2 py-0.5 rounded-full">
                                 T{order.tableNumber}
+                              </span>
+                            )}
+                            {/* P0-09: voided badge */}
+                            {order.status === "voided" && (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-600 line-through">
+                                VOIDED
                               </span>
                             )}
                             {/* ── Sync badge — only shown when meaningful ── */}
@@ -1404,6 +1439,27 @@ export default function OrdersPage() {
                               <div className="flex justify-between">
                                 <span>Change given</span>
                                 <span>{fmtRupee(order.changePaise)}</span>
+                              </div>
+                            )}
+                            {/* P0-09: Void button — owner only, can't re-void */}
+                            {state.session?.role === "owner" && order.status !== "voided" && (
+                              <div className="pt-2 border-t border-gray-100 mt-1">
+                                <button
+                                  onClick={async () => {
+                                    const reason = prompt("Void reason (optional):");
+                                    if (reason === null) return; // cancelled
+                                    await voidOrder(order.id, reason);
+                                    showToast("Order voided", "info");
+                                    setExpanded(null);
+                                  }}
+                                  className="flex items-center gap-1.5 text-xs text-red-500 hover:text-red-700 font-semibold py-1"
+                                >
+                                  <XCircle size={13} />
+                                  Void this order
+                                </button>
+                                {order.voidReason && (
+                                  <p className="text-xs text-gray-400 mt-0.5">Reason: {order.voidReason}</p>
+                                )}
                               </div>
                             )}
                           </div>
