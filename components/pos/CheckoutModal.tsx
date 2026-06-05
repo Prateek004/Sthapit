@@ -64,6 +64,7 @@ export default function CheckoutModal({
   const [splitUpi, setSplitUpi] = useState("");
   const [upiConfirmed, setUpiConfirmed] = useState(false);
   const [placing, setPlacing] = useState(false);
+  const placingRef = useRef(false); // P0-06: ref guard prevents double-tap even within same render cycle
   const [order, setOrder] = useState<Order | null>(null);
   const [postTab, setPostTab] = useState<PostTab>("invoice");
   const [qrSrc, setQrSrc] = useState("");
@@ -148,20 +149,23 @@ export default function CheckoutModal({
   };
 
   const handleConfirm = async () => {
-    if (!canConfirm) {
-      if (method === "cash" && cashInput === "")
-        showToast("Enter cash received", "error");
-      else if (method === "cash" && cashPaise < totalPaise)
-        showToast(`Short by ${fmtRupee(totalPaise - cashPaise)}`, "error");
-      else if (method === "split" && !splitOk)
-        showToast(
-          `Split short by ${fmtRupee(totalPaise - splitTotal)}`,
-          "error"
-        );
-      else if (method === "upi" && !upiConfirmed)
-        showToast("Confirm UPI received first", "error");
+    if (!canConfirm || placingRef.current) {
+      if (!placingRef.current) {
+        if (method === "cash" && cashInput === "")
+          showToast("Enter cash received", "error");
+        else if (method === "cash" && cashPaise < totalPaise)
+          showToast(`Short by ${fmtRupee(totalPaise - cashPaise)}`, "error");
+        else if (method === "split" && !splitOk)
+          showToast(
+            `Split short by ${fmtRupee(totalPaise - splitTotal)}`,
+            "error"
+          );
+        else if (method === "upi" && !upiConfirmed)
+          showToast("Confirm UPI received first", "error");
+      }
       return;
     }
+    placingRef.current = true; // P0-06: block any concurrent tap before state update
     setPlacing(true);
     try {
       const placed = await placeOrder({
@@ -179,6 +183,7 @@ export default function CheckoutModal({
       setShowUpiQr(false);
     } catch {
       showToast("Order failed. Try again.", "error");
+      placingRef.current = false;
       setPlacing(false);
     }
   };
