@@ -48,16 +48,25 @@ export default function DesktopSidebar() {
   const { state, logout } = useApp();
 
   const tablesEnabled = state.session?.stockSettings?.tablesEnabled ?? false;
+  const isOwner = state.session?.role === "owner";
 
   const NAV = [
-    { href: "/dashboard", label: "Dashboard", Icon: LayoutDashboard },
+    // Dashboard — owner only
+    ...(isOwner
+      ? [{ href: "/dashboard", label: "Dashboard", Icon: LayoutDashboard }]
+      : []),
     { href: "/pos", label: "POS", Icon: ShoppingCart },
     ...(tablesEnabled
       ? [{ href: "/tables", label: "Tables", Icon: LayoutGrid }]
       : []),
     { href: "/orders", label: "Orders", Icon: ClipboardList },
-    { href: "/stock", label: "Stock", Icon: Package },
-    { href: "/settings", label: "Settings", Icon: Settings },
+    // Stock and Settings — owner only
+    ...(isOwner
+      ? [
+          { href: "/stock", label: "Stock", Icon: Package },
+          { href: "/settings", label: "Settings", Icon: Settings },
+        ]
+      : []),
   ];
 
   const handleLogout = async () => {
