@@ -16,16 +16,25 @@ export default function BottomNav() {
   const { state } = useApp();
   const cartCount = state.cart.reduce((s, i) => s + i.qty, 0);
   const tablesEnabled = state.session?.stockSettings?.tablesEnabled ?? false;
+  const isOwner = state.session?.role === "owner";
 
   const TABS = [
-    { href: "/dashboard", label: "Home", Icon: LayoutDashboard },
+    // Dashboard — owner only
+    ...(isOwner
+      ? [{ href: "/dashboard", label: "Home", Icon: LayoutDashboard }]
+      : []),
     { href: "/pos", label: "POS", Icon: ShoppingCart },
     ...(tablesEnabled
       ? [{ href: "/tables", label: "Tables", Icon: LayoutGrid }]
       : []),
     { href: "/orders", label: "Orders", Icon: ClipboardList },
-    { href: "/stock", label: "Stock", Icon: Package },
-    { href: "/settings", label: "Settings", Icon: Settings },
+    // Stock and Settings — owner only
+    ...(isOwner
+      ? [
+          { href: "/stock", label: "Stock", Icon: Package },
+          { href: "/settings", label: "Settings", Icon: Settings },
+        ]
+      : []),
   ];
 
   return (
