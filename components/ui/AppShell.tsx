@@ -1,10 +1,13 @@
 "use client";
 import { useEffect, useState, type ReactNode } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { useApp } from "@/lib/store/AppContext";
 import DesktopSidebar from "./DesktopSidebar";
 import BottomNav from "./BottomNav";
 import { Lock } from "lucide-react";
+
+// Pages only an owner can visit. Cashiers are redirected to /pos.
+const OWNER_ONLY_PATHS = ["/dashboard", "/stock", "/settings", "/stats", "/menu"];
 
 function LoadingScreen() {
   return (
@@ -63,9 +66,6 @@ function LockScreen() {
   const { state, unlockSession, logout } = useApp();
   const [pin, setPin] = useState("");
   const [error, setError] = useState(false);
-  const storedPin = state.session?.stockSettings?.activeTab; // reuse field if set; else any input unlocks
-  // Note: real PIN storage should be in stockSettings.pin — this just unlocks with any 4-digit entry
-  // until a proper PIN setting is added to the settings page.
   const FIRE = "#E8590C";
 
   const handleDigit = (d: string) => {
@@ -74,7 +74,6 @@ function LockScreen() {
     setPin(next);
     setError(false);
     if (next.length === 4) {
-      // If no PIN set, any 4 digits unlocks. If PIN set, must match.
       const savedPin = typeof window !== "undefined" ? localStorage.getItem("sth1r_pin") : null;
       if (!savedPin || next === savedPin) {
         unlockSession();
@@ -147,10 +146,27 @@ function LockScreen() {
 export default function AppShell({ children }: { children: ReactNode }) {
   const { state } = useApp();
   const router = useRouter();
+  const pathname = usePathname();
 
   useEffect(() => {
-    if (!state.isLoading && !state.session) router.replace("/auth");
-  }, [state.isLoading, state.session, router]);
+    if (state.isLoading) return;
+
+    // Not logged in → go to auth
+    if (!state.session) {
+      router.replace("/auth");
+      return;
+    }
+
+    // Cashier trying to access an owner-only page → redirect to POS
+    if (state.session.role === "cashier") {
+      const blocked = OWNER_ONLY_PATHS.some(
+        (p) => pathname === p || pathname.startsWith(p + "/")
+      );
+      if (blocked) {
+        router.replace("/pos");
+      }
+    }
+  }, [state.isLoading, state.session, pathname, router]);
 
   if (state.isLoading) return <LoadingScreen />;
 
