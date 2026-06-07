@@ -118,7 +118,7 @@ export default function Error({
           </button>
 
           {isCorePath && (
-            
+            <a
               href="/pos"
               style={{
                 display: "block",
@@ -137,7 +137,7 @@ export default function Error({
             </a>
           )}
 
-          
+          <a
             href="/dashboard"
             style={{
               display: "block",
