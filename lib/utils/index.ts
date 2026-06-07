@@ -15,15 +15,13 @@ export const fmtRupee = (paise: number): string =>
  * - "flat"   : value is in RUPEES (user types ₹50 → value=50 → 5000 paise)
  * - "percent": value is 0-100 (user types 10 → 10% of subtotal)
  * Result is clamped to [0, subtotalPaise].
- *
- * FIX #15: Negative values are rejected — Math.max(0, value) guards both paths.
+ * Negative values are rejected — Math.max(0, value) guards both paths.
  */
 export const calcDiscount = (
   subtotalPaise: number,
   type: "flat" | "percent",
   value: number
 ): number => {
-  // FIX #15: guard negative input — a negative discount makes no sense
   const safeValue = Math.max(0, value);
   if (!safeValue) return 0;
   if (type === "percent") {
@@ -62,7 +60,7 @@ export const extractGSTFromInclusive = (
 // Format: STH-FY26-000001-<deviceSuffix>
 // FY = Indian financial year ending, Apr–Mar. Resets each new FY.
 // deviceSuffix = short UUID stored in localStorage, prevents collisions when
-// two devices are offline simultaneously (FIX #11).
+// two devices are offline simultaneously.
 const BILL_COUNTER_KEY = "sth1r_bill_counter";
 const BILL_FY_KEY      = "sth1r_bill_fy";
 const DEVICE_ID_KEY    = "sth1r_device_id";
@@ -75,12 +73,10 @@ function getCurrentFY(): string {
   return String(fyEnd).slice(2); // e.g. "26" for FY 2025-26
 }
 
-// FIX #11: Returns a short, stable device ID. Generated once and stored.
 function getDeviceId(): string {
   try {
     let id = localStorage.getItem(DEVICE_ID_KEY);
     if (!id) {
-      // 4-char alphanumeric, e.g. "A3F7"
       id = crypto.randomUUID().replace(/-/g, "").slice(0, 4).toUpperCase();
       localStorage.setItem(DEVICE_ID_KEY, id);
     }
@@ -98,17 +94,14 @@ export const generateBillNumber = (): string => {
     let counter = parseInt(localStorage.getItem(BILL_COUNTER_KEY) ?? "0", 10);
 
     if (storedFY !== fy) {
-      // New financial year — reset counter
       counter = 0;
       localStorage.setItem(BILL_FY_KEY, fy);
     }
 
     counter += 1;
     localStorage.setItem(BILL_COUNTER_KEY, String(counter));
-    // FIX #11: Append device suffix to prevent bill number collisions across devices
     return `STH-FY${fy}-${String(counter).padStart(6, "0")}-${deviceId}`;
   } catch {
-    // Fallback: random suffix (SSR / private browsing)
     const rand = crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase();
     return `STH-${rand}`;
   }
@@ -153,12 +146,6 @@ export function cn(
 // Single source of truth for role-based access.
 // UI visibility and data-layer guards must both call canPerform() so they
 // can never diverge.
-//
-// Usage:
-//   canPerform("manageSettings", session)  → true for owner only
-//   canPerform("voidOrder", session)        → true for owner only
-//   canPerform("placeOrder", session)       → true for owner + cashier
-//   canPerform("viewReports", session)      → true for owner only
 
 import type { UserSession } from "@/lib/types";
 
@@ -186,4 +173,60 @@ export function canPerform(
   if (session.role === "owner") return true;
   // cashier: only non-destructive POS operations
   return !OWNER_ONLY.includes(action);
+}
+
+// ── Payment reconciliation validator (Phase 7B) ───────────────────────────────
+/**
+ * Validates that an order's payment captures match its total.
+ * Returns null if valid, or an error description string.
+ */
+export function validatePaymentReconciliation(order: import("@/lib/types").Order): string | null {
+  const { totalPaise, paymentMethod, splitPayment, cashReceivedPaise } = order;
+
+  if (totalPaise < 0) return `Negative total: ${totalPaise}`;
+
+  if (paymentMethod === "split") {
+    if (!splitPayment) return "Split payment missing split details";
+    const captured = (splitPayment.cashPaise ?? 0) + (splitPayment.upiPaise ?? 0);
+    // 1 paise tolerance for rounding
+    if (captured < totalPaise - 1) return `Split underpayment: captured ${captured}, total ${totalPaise}`;
+    return null;
+  }
+
+  if (paymentMethod === "cash" && cashReceivedPaise !== undefined) {
+    if (cashReceivedPaise < totalPaise) {
+      return `Cash underpayment: received ${cashReceivedPaise}, total ${totalPaise}`;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Validate that a TableOrder is internally consistent.
+ * Returns null if valid, or error string.
+ */
+export function validateTableOrderInvariants(order: import("@/lib/types").TableOrder): string | null {
+  if (order.totalPaise < 0) return `Negative total on table ${order.tableId}`;
+  if (order.subtotalPaise < 0) return `Negative subtotal on table ${order.tableId}`;
+  if (order.discountPaise < 0) return `Negative discount on table ${order.tableId}`;
+  if (order.version < 1) return `Invalid version on table ${order.tableId}`;
+  if (order.status === "AVAILABLE" && order.items.length > 0) {
+    return `AVAILABLE table has ${order.items.length} items — impossible state`;
+  }
+  if (order.status === "OCCUPIED" && order.items.length === 0) {
+    return `OCCUPIED table has 0 items — impossible state`;
+  }
+  return null;
+}
+
+/**
+ * Safe JSON stringify — never throws.
+ */
+export function safeJson(val: unknown): string {
+  try {
+    return JSON.stringify(val);
+  } catch {
+    return "[unserializable]";
+  }
 }
