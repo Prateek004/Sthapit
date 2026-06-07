@@ -19,6 +19,7 @@ import type {
   OpenTable,
 } from "@/lib/types";
 import { calcDiscount, calcGST, generateBillNumber, canPerform } from "@/lib/utils";
+import { debounceAsync } from "@/lib/utils/mutex";
 import { MENU_TEMPLATES } from "@/lib/utils/menuTemplates";
 import { getSupabase, isSupabaseEnabled } from "@/lib/supabase/client";
 import { TableStoreProvider } from "@/lib/store/tableStore";
@@ -41,17 +42,13 @@ interface AppState {
   isLoading: boolean;
   toasts: Toast[];
   activeStockTab: string;
-  // Persistent UI state — restored across page loads / tab closes
   posActiveCat: string;
   ordersFilter: "today" | "all";
   ordersTab: "orders" | "tables";
   ordersTableView: "map" | "list";
-  // P0-05: sync status
   pendingSyncCount: number;
   isOnline: boolean;
-  // P0-11: migration error
   migrationFailed: boolean;
-  // P1-02: inactivity lock
   isLocked: boolean;
 }
 
@@ -123,8 +120,8 @@ function loadSession(): UserSession | null {
   }
 }
 
+// P0-01: localStorage as fast-read cache only — IDB is source of truth
 function saveCart(cart: CartItem[]): void {
-  // P0-01: localStorage as fast-read cache only (IDB is source of truth — see AppProvider)
   try {
     localStorage.setItem(CART_KEY, JSON.stringify(cart));
   } catch {}
@@ -139,7 +136,7 @@ function loadCartFromLocalStorage(): CartItem[] {
   }
 }
 
-// UIState: only non-session-specific preferences that should survive logout.
+// UIState: only non-session-specific preferences that survive logout.
 // tableNumber is deliberately excluded — it is session-specific and must reset
 // on every login/logout so a shared device does not expose a prior user's table.
 interface UIState {
@@ -196,7 +193,6 @@ async function restoreSessionFromSupabase(session: UserSession): Promise<UserSes
     if (!user) return session;
     const { data: profile } = await sb
       .from("profiles")
-      // FIX #5: also fetch stock_settings so all devices stay in sync
       .select("gst_percent, upi_id, stock_settings")
       .eq("id", user.id)
       .single();
@@ -205,7 +201,6 @@ async function restoreSessionFromSupabase(session: UserSession): Promise<UserSes
       ...session,
       gstPercent: profile.gst_percent ?? session.gstPercent,
       upiId: profile.upi_id ?? session.upiId,
-      // stock_settings is a JSONB column — cast to StockSettings if present
       ...(profile.stock_settings
         ? { stockSettings: profile.stock_settings as import("@/lib/types").StockSettings }
         : {}),
@@ -299,9 +294,8 @@ function reducer(state: AppState, action: Action): AppState {
         orders: action.orders,
         openTables: action.openTables,
         cart: action.cart,
-        // serviceMode and tableNumber are NOT restored from persisted UI —
-        // they are session-specific and must reset on every login to prevent
-        // shared-device leakage.
+        // serviceMode and tableNumber NOT restored — session-specific, must reset
+        // on every login to prevent shared-device state leakage.
         serviceMode: "dine_in",
         tableNumber: undefined,
         activeStockTab: action.activeStockTab,
@@ -340,7 +334,13 @@ function reducer(state: AppState, action: Action): AppState {
         ...state,
         orders: state.orders.map((o) =>
           o.id === action.id
-            ? { ...o, status: "voided" as const, voidedAt: action.voidedAt, voidReason: action.voidReason, syncStatus: "pending" as const }
+            ? {
+                ...o,
+                status: "voided" as const,
+                voidedAt: action.voidedAt,
+                voidReason: action.voidReason,
+                syncStatus: "pending" as const,
+              }
             : o
         ),
       };
@@ -388,6 +388,9 @@ function reducer(state: AppState, action: Action): AppState {
     case "CART_CLEAR":
       return { ...state, cart: [] };
     case "ORDER_ADD":
+      // Deduplicate: if an order with this id already exists, don't add it again.
+      // Prevents double-counting when notifyOrderPlaced is called after placeOrder.
+      if (state.orders.some((o) => o.id === action.payload.id)) return state;
       return { ...state, orders: [action.payload, ...state.orders] };
     case "MENU_ITEM_UPSERT":
       return {
@@ -470,8 +473,8 @@ interface AppContextValue {
   setOrdersTableView: (view: "map" | "list") => void;
   voidOrder: (id: string, reason?: string) => Promise<void>;
   unlockSession: () => void;
-  /** FIX #2: Notify AppContext that an order was placed from an external path (e.g. table checkout).
-   * Dispatches ORDER_ADD so the Orders page revenue counter updates without a full reload. */
+  /** Notify AppContext that an order was placed from an external path (e.g. table checkout).
+   * Dispatches ORDER_ADD so dashboard/orders page updates without full reload. */
   notifyOrderPlaced: (order: Order) => void;
 }
 
@@ -493,6 +496,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const inactivityTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const INACTIVITY_MS = 15 * 60 * 1000; // P1-02: 15 min
 
+  // ── FIX C-03: In-flight guards prevent double-submit ───────────────────────
+  const placeOrderInFlight = useRef(false);
+  const closeTableInFlight = useRef<Set<string>>(new Set());
+
+  // ── FIX H-05: Debounced IDB cart write — prevent write storms ─────────────
+  // Created once per session; ref holds the debounced function.
+  const debouncedCartSave = useRef<((cart: CartItem[], uid: string) => void) | null>(null);
+
   // P1-02: Reset inactivity timer on any user interaction
   const resetInactivityTimer = useCallback(() => {
     if (!state.session) return;
@@ -513,6 +524,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
   }, [state.session, state.isLoading, resetInactivityTimer]);
 
+  // ── Boot ──────────────────────────────────────────────────────────────────
   useEffect(() => {
     async function init() {
       try {
@@ -605,16 +617,33 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
     }
     init();
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // P0-01: persist cart to IDB (source of truth) + localStorage (fast cache)
+  // ── FIX H-05: Persist cart to IDB (debounced 300ms) + localStorage immediately ──
   useEffect(() => {
     if (state.isLoading || !state.session) return;
     const uid = state.session.userId;
-    saveCart(state.cart); // localStorage fast cache
-    import("@/lib/db")
-      .then(({ dbSaveCart }) => dbSaveCart(state.cart, uid))
-      .catch(() => {});
+
+    // localStorage: immediate (fast read on next boot)
+    saveCart(state.cart);
+
+    // IDB: debounced — collapses rapid cart mutations into one write
+    if (!debouncedCartSave.current) {
+      debouncedCartSave.current = (() => {
+        let latestCart: CartItem[] = [];
+        let latestUid: string = "";
+        const flush = debounceAsync(async () => {
+          const { dbSaveCart } = await import("@/lib/db");
+          await dbSaveCart(latestCart, latestUid);
+        }, 300);
+        return (cart: CartItem[], uid: string) => {
+          latestCart = cart;
+          latestUid = uid;
+          flush();
+        };
+      })();
+    }
+    debouncedCartSave.current(state.cart, uid);
   }, [state.cart, state.session, state.isLoading]);
 
   useEffect(() => {
@@ -632,8 +661,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (!state.isLoading) saveSession(state.session);
   }, [state.session, state.isLoading]);
 
+  // ── Login ─────────────────────────────────────────────────────────────────
   const login = useCallback(async (session: UserSession) => {
     saveSession(session);
+    // Reset debounced cart writer for new session
+    debouncedCartSave.current = null;
     try {
       const ui = loadUI();
       const { dbLoadCart } = await import("@/lib/db");
@@ -653,7 +685,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       });
       saveSession(restoredSession);
 
-      // P0-03: restore menu if empty, then sync
       if (items.length === 0) {
         import("@/lib/supabase/sync")
           .then(({ restoreMenuFromSupabase }) => restoreMenuFromSupabase(restoredSession.userId))
@@ -679,6 +710,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
           restoreTableOrdersFromSupabase(restoredSession.userId)
         )
         .catch(() => {});
+
+      // Audit login
+      import("@/lib/utils/auditLog")
+        .then(({ logAudit }) => logAudit("LOGIN", restoredSession.userId, { username: restoredSession.username }))
+        .catch(() => {});
+
     } catch {
       dispatch({
         type: "INIT_DONE",
@@ -692,10 +729,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
         ordersTableView: "map",
       });
     }
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Logout ────────────────────────────────────────────────────────────────
   const logout = useCallback(async () => {
-    // Read session BEFORE clearing storage — loadSession() returns null after removal
+    // Read session BEFORE clearing storage
     const currentSession = (() => {
       try {
         const raw = localStorage.getItem(SESSION_KEY);
@@ -703,22 +741,38 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return JSON.parse(raw) as UserSession;
       } catch { return null; }
     })();
+
     try {
       localStorage.removeItem(SESSION_KEY);
       localStorage.removeItem(CART_KEY);
       localStorage.removeItem(UI_KEY);
     } catch {}
-    // P0-01: clear IDB cart on logout using the session captured above
+
+    // P0-01: clear IDB cart on logout
     try {
       if (currentSession) {
         const { dbClearCart } = await import("@/lib/db");
         await dbClearCart(currentSession.userId);
       }
     } catch {}
+
     try {
       const { signOut } = await import("@/lib/supabase/auth");
       await signOut();
     } catch {}
+
+    // Audit logout
+    if (currentSession) {
+      import("@/lib/utils/auditLog")
+        .then(({ logAudit }) => logAudit("LOGOUT", currentSession.userId, { username: currentSession.username }))
+        .catch(() => {});
+    }
+
+    // Reset in-flight guards
+    placeOrderInFlight.current = false;
+    closeTableInFlight.current.clear();
+    debouncedCartSave.current = null;
+
     dispatch({ type: "LOGOUT" });
   }, []);
 
@@ -773,7 +827,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       await db.dbBulkSaveCategories(template.categories, userId);
       await db.dbBulkSaveMenuItems(template.items, userId);
       dispatch({ type: "SET_MENU", items: template.items, categories: template.categories });
-      // P0-03: also sync new menu to Supabase
       import("@/lib/supabase/sync")
         .then(({ syncMenu }) => syncMenu(userId))
         .catch(() => {});
@@ -795,6 +848,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
   const clearCart = useCallback(() => dispatch({ type: "CART_CLEAR" }), []);
 
+  // ── FIX C-03 + H-07: placeOrder with in-flight guard + invariant checks ──
   const placeOrder = useCallback(
     async (params: {
       paymentMethod: Order["paymentMethod"];
@@ -803,92 +857,132 @@ export function AppProvider({ children }: { children: ReactNode }) {
       cashReceivedPaise?: number;
       splitPayment?: { cashPaise: number; upiPaise: number };
     }): Promise<Order> => {
-      const { paymentMethod, discountType, discountValue, cashReceivedPaise, splitPayment } = params;
-      const snap = structuredClone(state.cart);
-      if (snap.length === 0) throw new Error("Cart is empty");
+      // Prevent double-submit
+      if (placeOrderInFlight.current) throw new Error("Order already being placed — please wait");
+      placeOrderInFlight.current = true;
 
-      const subtotalPaise = snap.reduce(
-        (s, i) =>
-          s + (i.unitPricePaise + i.selectedAddOns.reduce((x, a) => x + a.pricePaise, 0)) * i.qty,
-        0
-      );
-      const discountPaise = calcDiscount(subtotalPaise, discountType, discountValue);
-      const afterDiscount = Math.max(0, subtotalPaise - discountPaise);
-      const gstPercent = state.session?.gstPercent ?? 0;
-      // P1-06: mirror CartPanel — inclusive = extract GST from price, exclusive = add on top
-      const gstInclusive = state.session?.stockSettings?.gstInclusive ?? false;
-      const gstPaise = gstInclusive
-        ? Math.round((afterDiscount * gstPercent) / (100 + gstPercent))
-        : calcGST(afterDiscount, gstPercent);
-      const totalPaise = gstInclusive ? afterDiscount : afterDiscount + gstPaise;
-      const changePaise = cashReceivedPaise ? Math.max(0, cashReceivedPaise - totalPaise) : 0;
-
-      // P0-02: use Supabase atomic counter, fall back to local generateBillNumber
-      let billNumber = generateBillNumber();
       try {
-        const { getNextBillCounterFromSupabase } = await import("@/lib/supabase/sync");
-        const remote = await getNextBillCounterFromSupabase();
-        if (remote !== null) billNumber = `#${String(remote).padStart(4, "0")}`;
-      } catch {}
+        const { paymentMethod, discountType, discountValue, cashReceivedPaise, splitPayment } = params;
+        const snap = structuredClone(state.cart);
+        if (snap.length === 0) throw new Error("Cart is empty");
 
-      const order: Order = {
-        id: crypto.randomUUID(),
-        billNumber,
-        items: snap,
-        serviceMode: state.serviceMode,
-        tableNumber: state.tableNumber,
-        subtotalPaise,
-        discountPaise,
-        discountType,
-        discountValue,
-        gstPercent,
-        gstPaise,
-        totalPaise,
-        paymentMethod,
-        splitPayment,
-        cashReceivedPaise,
-        changePaise,
-        createdAt: new Date().toISOString(),
-        syncStatus: "pending",
-        status: "completed",
-      };
+        const subtotalPaise = snap.reduce(
+          (s, i) =>
+            s + (i.unitPricePaise + i.selectedAddOns.reduce((x, a) => x + a.pricePaise, 0)) * i.qty,
+          0
+        );
+        const discountPaise = calcDiscount(subtotalPaise, discountType, discountValue);
+        const afterDiscount = Math.max(0, subtotalPaise - discountPaise);
+        const gstPercent = state.session?.gstPercent ?? 0;
+        // P1-06: inclusive = extract GST from price, exclusive = add on top
+        const gstInclusive = state.session?.stockSettings?.gstInclusive ?? false;
+        const gstPaise = gstInclusive
+          ? Math.round((afterDiscount * gstPercent) / (100 + gstPercent))
+          : calcGST(afterDiscount, gstPercent);
+        const totalPaise = gstInclusive ? afterDiscount : afterDiscount + gstPaise;
 
-      const uid = state.session?.userId ?? "default";
-      const db = await import("@/lib/db");
-      await db.dbSaveOrder(order, uid);
-      dispatch({ type: "ORDER_ADD", payload: order });
-      dispatch({ type: "CART_CLEAR" });
+        // INVARIANT: non-negative total
+        if (totalPaise < 0) throw new Error("Invariant violation: negative order total");
 
-      import("@/lib/supabase/sync")
-        .then(({ syncOrder }) => syncOrder(order))
-        .catch(() => {});
+        const changePaise = cashReceivedPaise ? Math.max(0, cashReceivedPaise - totalPaise) : 0;
 
-      return order;
+        // P0-02: Supabase atomic counter, fall back to local (device-suffixed)
+        let billNumber = generateBillNumber();
+        try {
+          const { getNextBillCounterFromSupabase } = await import("@/lib/supabase/sync");
+          const remote = await getNextBillCounterFromSupabase();
+          if (remote !== null) billNumber = `#${String(remote).padStart(4, "0")}`;
+        } catch {}
+
+        const order: Order = {
+          id: crypto.randomUUID(),
+          billNumber,
+          items: snap,
+          serviceMode: state.serviceMode,
+          tableNumber: state.tableNumber,
+          subtotalPaise,
+          discountPaise,
+          discountType,
+          discountValue,
+          gstPercent,
+          gstPaise,
+          totalPaise,
+          paymentMethod,
+          splitPayment,
+          cashReceivedPaise,
+          changePaise,
+          createdAt: new Date().toISOString(),
+          syncStatus: "pending",
+          status: "completed",
+        };
+
+        const uid = state.session?.userId ?? "default";
+        const db = await import("@/lib/db");
+        await db.dbSaveOrder(order, uid);
+        dispatch({ type: "ORDER_ADD", payload: order });
+        dispatch({ type: "CART_CLEAR" });
+
+        // Audit
+        import("@/lib/utils/auditLog")
+          .then(({ logAudit }) =>
+            logAudit("ORDER_PLACED", uid, {
+              entityType: "order",
+              entityId: order.id,
+              meta: { billNumber, totalPaise, paymentMethod },
+            })
+          )
+          .catch(() => {});
+
+        import("@/lib/supabase/sync")
+          .then(({ syncOrder }) => syncOrder(order))
+          .catch(() => {});
+
+        return order;
+      } finally {
+        placeOrderInFlight.current = false;
+      }
     },
     [state.cart, state.session, state.serviceMode, state.tableNumber]
   );
 
-  // P0-09: void order
+  // ── FIX H-04: voidOrder reads from IDB (not stale state.orders snapshot) ──
   const voidOrder = useCallback(
     async (id: string, reason = "") => {
-      // Permission foundation: only owner can void orders at data layer
       if (!canPerform("voidOrder", state.session)) {
         throw new Error("Permission denied: only owners can void orders");
       }
       const uid = state.session?.userId ?? "default";
-      const voidedAt = new Date().toISOString();
+
+      // Read current state from IDB — source of truth, not state.orders
       const db = await import("@/lib/db");
+      const allOrders = await db.dbGetAllOrders(uid);
+      const target = allOrders.find((o) => o.id === id);
+      if (!target) throw new Error("Order not found");
+      if (target.status === "voided") throw new Error("Order already voided");
+
+      const voidedAt = new Date().toISOString();
       await db.dbVoidOrder(id, uid, reason);
       dispatch({ type: "ORDER_VOID", id, voidedAt, voidReason: reason });
-      // sync void to Supabase
-      const voided = state.orders.find((o) => o.id === id);
-      if (voided) {
-        import("@/lib/supabase/sync")
-          .then(({ syncOrder }) => syncOrder({ ...voided, status: "voided", voidedAt, voidReason: reason, syncStatus: "pending" }))
-          .catch(() => {});
-      }
+
+      // Audit
+      import("@/lib/utils/auditLog")
+        .then(({ logAudit }) =>
+          logAudit("ORDER_VOIDED", uid, {
+            entityType: "order",
+            entityId: id,
+            meta: { reason, billNumber: target.billNumber, totalPaise: target.totalPaise },
+          })
+        )
+        .catch(() => {});
+
+      // Sync voided record (built from IDB truth, not stale state snapshot)
+      import("@/lib/supabase/sync")
+        .then(({ syncOrder }) =>
+          syncOrder({ ...target, status: "voided", voidedAt, voidReason: reason, syncStatus: "pending" })
+        )
+        .catch(() => {});
     },
-    [state.orders, state.session]
+    [state.session] // removed state.orders dependency — reads IDB directly
   );
 
   const holdToTable = useCallback(
@@ -926,6 +1020,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [state.openTables, state.session]
   );
 
+  // ── FIX C-03 + C-04: closeTable with guard + audit ────────────────────────
   const closeTable = useCallback(
     async (
       tableId: string,
@@ -937,58 +1032,82 @@ export function AppProvider({ children }: { children: ReactNode }) {
         splitPayment?: { cashPaise: number; upiPaise: number };
       }
     ): Promise<Order> => {
-      const tab = state.openTables.find((t) => t.id === tableId);
-      if (!tab) throw new Error("Table not found");
-      const { paymentMethod, discountType, discountValue, cashReceivedPaise, splitPayment } = params;
-      const subtotalPaise = tab.items.reduce(
-        (s, i) =>
-          s + (i.unitPricePaise + i.selectedAddOns.reduce((x, a) => x + a.pricePaise, 0)) * i.qty,
-        0
-      );
-      const discountPaise = calcDiscount(subtotalPaise, discountType, discountValue);
-      const afterDiscount = Math.max(0, subtotalPaise - discountPaise);
-      const gstPercent = state.session?.gstPercent ?? 0;
-      // P1-06: respect gstInclusive for legacy open-table billing path
-      const gstInclusive = state.session?.stockSettings?.gstInclusive ?? false;
-      const gstPaise = gstInclusive
-        ? Math.round((afterDiscount * gstPercent) / (100 + gstPercent))
-        : calcGST(afterDiscount, gstPercent);
-      const totalPaise = gstInclusive ? afterDiscount : afterDiscount + gstPaise;
-      const changePaise = cashReceivedPaise ? Math.max(0, cashReceivedPaise - totalPaise) : 0;
+      // Prevent double-submit per table
+      if (closeTableInFlight.current.has(tableId)) {
+        throw new Error("Table close already in progress — please wait");
+      }
+      closeTableInFlight.current.add(tableId);
 
-      let billNumber = generateBillNumber();
       try {
-        const { getNextBillCounterFromSupabase } = await import("@/lib/supabase/sync");
-        const remote = await getNextBillCounterFromSupabase();
-        if (remote !== null) billNumber = `#${String(remote).padStart(4, "0")}`;
-      } catch {}
+        const tab = state.openTables.find((t) => t.id === tableId);
+        if (!tab) throw new Error("Table not found");
+        const { paymentMethod, discountType, discountValue, cashReceivedPaise, splitPayment } = params;
+        const subtotalPaise = tab.items.reduce(
+          (s, i) =>
+            s + (i.unitPricePaise + i.selectedAddOns.reduce((x, a) => x + a.pricePaise, 0)) * i.qty,
+          0
+        );
+        const discountPaise = calcDiscount(subtotalPaise, discountType, discountValue);
+        const afterDiscount = Math.max(0, subtotalPaise - discountPaise);
+        const gstPercent = state.session?.gstPercent ?? 0;
+        const gstInclusive = state.session?.stockSettings?.gstInclusive ?? false;
+        const gstPaise = gstInclusive
+          ? Math.round((afterDiscount * gstPercent) / (100 + gstPercent))
+          : calcGST(afterDiscount, gstPercent);
+        const totalPaise = gstInclusive ? afterDiscount : afterDiscount + gstPaise;
 
-      const order: Order = {
-        id: crypto.randomUUID(),
-        billNumber,
-        items: tab.items,
-        serviceMode: "dine_in",
-        tableNumber: tab.tableNumber,
-        subtotalPaise, discountPaise, discountType, discountValue,
-        gstPercent, gstPaise, totalPaise,
-        paymentMethod, splitPayment, cashReceivedPaise, changePaise,
-        createdAt: new Date().toISOString(),
-        syncStatus: "pending",
-        status: "completed",
-      };
+        // INVARIANT: non-negative total
+        if (totalPaise < 0) throw new Error("Invariant violation: negative order total");
 
-      const uid = state.session?.userId ?? "default";
-      const db = await import("@/lib/db");
-      await db.dbSaveOrder(order, uid);
-      await db.dbDeleteOpenTable(tableId, uid);
-      dispatch({ type: "ORDER_ADD", payload: order });
-      dispatch({ type: "OPEN_TABLE_REMOVE", id: tableId });
+        const changePaise = cashReceivedPaise ? Math.max(0, cashReceivedPaise - totalPaise) : 0;
 
-      import("@/lib/supabase/sync")
-        .then(({ syncOrder }) => syncOrder(order))
-        .catch(() => {});
+        let billNumber = generateBillNumber();
+        try {
+          const { getNextBillCounterFromSupabase } = await import("@/lib/supabase/sync");
+          const remote = await getNextBillCounterFromSupabase();
+          if (remote !== null) billNumber = `#${String(remote).padStart(4, "0")}`;
+        } catch {}
 
-      return order;
+        const order: Order = {
+          id: crypto.randomUUID(),
+          billNumber,
+          items: tab.items,
+          serviceMode: "dine_in",
+          tableNumber: tab.tableNumber,
+          subtotalPaise, discountPaise, discountType, discountValue,
+          gstPercent, gstPaise, totalPaise,
+          paymentMethod, splitPayment, cashReceivedPaise, changePaise,
+          createdAt: new Date().toISOString(),
+          syncStatus: "pending",
+          status: "completed",
+        };
+
+        const uid = state.session?.userId ?? "default";
+        const db = await import("@/lib/db");
+        await db.dbSaveOrder(order, uid);
+        await db.dbDeleteOpenTable(tableId, uid);
+        dispatch({ type: "ORDER_ADD", payload: order });
+        dispatch({ type: "OPEN_TABLE_REMOVE", id: tableId });
+
+        // Audit
+        import("@/lib/utils/auditLog")
+          .then(({ logAudit }) =>
+            logAudit("TABLE_CLOSED", uid, {
+              entityType: "table",
+              entityId: tableId,
+              meta: { billNumber, totalPaise, paymentMethod, tableNumber: tab.tableNumber },
+            })
+          )
+          .catch(() => {});
+
+        import("@/lib/supabase/sync")
+          .then(({ syncOrder }) => syncOrder(order))
+          .catch(() => {});
+
+        return order;
+      } finally {
+        closeTableInFlight.current.delete(tableId);
+      }
     },
     [state.openTables, state.session]
   );
@@ -1003,7 +1122,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const itemWithTs = { ...item, updatedAt: new Date().toISOString() };
       await db.dbSaveMenuItem(itemWithTs, uid);
       dispatch({ type: "MENU_ITEM_UPSERT", payload: itemWithTs });
-      // P0-03: sync to Supabase
+
+      // Audit
+      import("@/lib/utils/auditLog")
+        .then(({ logAudit }) =>
+          logAudit(item.id ? "MENU_ITEM_UPDATED" : "MENU_ITEM_ADDED", uid, {
+            entityType: "menu_item",
+            entityId: item.id,
+            meta: { name: item.name, pricePaise: item.pricePaise },
+          })
+        )
+        .catch(() => {});
+
       import("@/lib/supabase/sync")
         .then(({ syncMenu }) => syncMenu(uid))
         .catch(() => {});
@@ -1020,6 +1150,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const db = await import("@/lib/db");
       await db.dbDeleteMenuItem(id, uid);
       dispatch({ type: "MENU_ITEM_DELETE", id });
+
+      // Audit
+      import("@/lib/utils/auditLog")
+        .then(({ logAudit }) =>
+          logAudit("MENU_ITEM_DELETED", uid, { entityType: "menu_item", entityId: id })
+        )
+        .catch(() => {});
+
       import("@/lib/supabase/sync")
         .then(({ syncMenu }) => syncMenu(uid))
         .catch(() => {});
@@ -1071,6 +1209,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const notifyOrderPlaced = useCallback(
     (order: Order) => {
+      // ORDER_ADD reducer now deduplicates by id — safe to call even if already added
       dispatch({ type: "ORDER_ADD", payload: order });
     },
     []
