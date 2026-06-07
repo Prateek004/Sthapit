@@ -191,12 +191,10 @@ export function subscribeToTableOrders(
           syncStatus: "synced",
           gstPercentAtOpen: (remote.gst_percent_at_open as number) ?? undefined,
         };
-        // Save to IDB and notify store
+        // Save to IDB using the userId captured at subscription time —
+        // never re-read localStorage inside a realtime callback (stale/wrong-user risk)
         const { dbSaveTableOrder } = await import("@/lib/db");
-        // Get uid for IDB save
-        const raw = typeof window !== "undefined" ? localStorage.getItem("sth1r_session") : null;
-        const uid = raw ? (JSON.parse(raw).userId ?? userId) : userId;
-        await dbSaveTableOrder(order, uid);
+        await dbSaveTableOrder(order, userId);
         onUpdate(order);
       }
     )
