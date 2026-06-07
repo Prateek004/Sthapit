@@ -79,7 +79,9 @@ export async function syncAllPendingTableOrders(uid: string): Promise<void> {
 
     // Delete cleared tables from Supabase
     for (const order of toDelete) {
-      await sb.from("table_orders").delete().eq("id", order.id).eq("user_id", user.id)
+      await Promise.resolve(
+        sb.from("table_orders").delete().eq("id", order.id).eq("user_id", user.id)
+      )
         .then(() => dbUpdateTableOrderSyncStatus(order.id, "synced"))
         .catch(() => {});
     }
