@@ -181,7 +181,9 @@ export async function getNextBillCounterFromSupabase(): Promise<number | null> {
     const pending = _billMutexMap.get(key);
     if (pending) return pending;
 
-    const promise = sb.rpc("increment_bill_counter", { p_user_id: user.id })
+    const promise = Promise.resolve(
+      sb.rpc("increment_bill_counter", { p_user_id: user.id })
+    )
       .then(({ data, error }) => {
         _billMutexMap.delete(key);
         if (error) return null;
