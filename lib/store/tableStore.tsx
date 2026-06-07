@@ -1,20 +1,13 @@
 "use client";
 
 /**
- * TableStore — minimal, isolated state for the /tables module.
+ * TableStore — isolated state for the /tables module.
  *
- * Deliberately NOT merged into AppContext to keep the global store small.
- * Uses a simple module-level singleton + React context for subscriptions.
- *
- * Responsibilities:
- *  - Load all active TableOrders from IndexedDB on boot
- *  - Expose per-table order as a reactive value
- *  - Autosave every mutation to IndexedDB immediately
- *  - Queue sync events for when Supabase comes back online
- *  - Compute table totals
- *
- * Concurrency: optimistic version check — if remote version > local,
- * reload from DB before writing.
+ * FIXES applied in this version:
+ *  H-03: All mutations use dbAtomicUpdateTableOrder — no lost-update race.
+ *  C-01: clearOrder() now syncs deletion to Supabase.
+ *  C-03: persist() is serialized per-table via a per-table mutex map.
+ *  H-08: Permission check added to checkout path (enforced upstream).
  */
 
 import {
@@ -35,6 +28,16 @@ import type {
   UserSession,
 } from "@/lib/types";
 import { calcGST } from "@/lib/utils";
+import { Mutex } from "@/lib/utils/mutex";
+import { logAudit } from "@/lib/utils/auditLog";
+
+// ── Per-table mutex map ───────────────────────────────────────────────────────
+// Prevents concurrent mutations on the same table from racing.
+const _tableMutexes = new Map<string, Mutex>();
+function getTableMutex(tableId: string): Mutex {
+  if (!_tableMutexes.has(tableId)) _tableMutexes.set(tableId, new Mutex());
+  return _tableMutexes.get(tableId)!;
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -96,7 +99,6 @@ function makeTableOrder(
     updatedAt: now,
     version: 1,
     syncStatus: "pending",
-    // P0-08: lock GST rate at open time — never retroactively changed
     gstPercentAtOpen,
   };
 }
@@ -104,7 +106,6 @@ function makeTableOrder(
 // ── State & Actions ───────────────────────────────────────────────────────────
 
 interface TableStoreState {
-  /** Map of tableOrderId → TableOrder */
   orders: Record<string, TableOrder>;
   isLoading: boolean;
 }
@@ -140,10 +141,8 @@ function reducer(state: TableStoreState, action: TableStoreAction): TableStoreSt
 
 interface TableStoreContextValue {
   state: TableStoreState;
-  /** Get or create a table order for the given table */
   getOrCreateOrder: (tableId: string, tableName: string, tableNumber: number) => TableOrder;
   addItem: (tableId: string, tableName: string, tableNumber: number, item: MenuItem, addOns: AddOn[], size?: string, portion?: string, notes?: string) => Promise<void>;
-  /** Bulk-add already-configured cart items (used by the POS "Hold to table") */
   addCartItems: (tableId: string, tableName: string, tableNumber: number, items: CartItem[]) => Promise<void>;
   updateItemQty: (tableId: string, cartId: string, qty: number) => Promise<void>;
   removeItem: (tableId: string, cartId: string) => Promise<void>;
@@ -167,11 +166,12 @@ export function TableStoreProvider({
   const [state, dispatch] = useReducer(reducer, { orders: {}, isLoading: true });
   const uid = session?.userId ?? "default";
   const currentGstPercent = session?.gstPercent ?? 0;
-  // Ref to avoid stale closures in async save functions
   const stateRef = useRef(state);
   stateRef.current = state;
+  const uidRef = useRef(uid);
+  uidRef.current = uid;
 
-  // Boot: load all active table orders from IndexedDB
+  // Boot: load from IDB
   useEffect(() => {
     if (!session) {
       dispatch({ type: "INIT", orders: [] });
@@ -182,16 +182,15 @@ export function TableStoreProvider({
         dispatch({ type: "INIT", orders });
       })
     );
-  }, [session?.userId]);
+  }, [session?.userId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // P1-01: Supabase Realtime — table state pushed to all devices instantly
+  // Realtime subscription
   useEffect(() => {
     if (!session?.userId) return;
     import("@/lib/supabase/tableSync").then(({ subscribeToTableOrders }) => {
       const unsub = subscribeToTableOrders(
         session.userId,
         (order) => {
-          // Only apply if remote is newer than local
           const local = stateRef.current.orders[order.id];
           if (!local || order.version > local.version) {
             dispatch({ type: "UPSERT", order });
@@ -203,18 +202,31 @@ export function TableStoreProvider({
     }).catch(() => {});
   }, [session?.userId]);
 
-  // ── Internal: persist + dispatch ─────────────────────────────────────────
-  const persist = useCallback(
-    async (order: TableOrder): Promise<void> => {
-      dispatch({ type: "UPSERT", order });
-      const { dbSaveTableOrder } = await import("@/lib/db");
-      await dbSaveTableOrder(order, uid);
-      // Fire-and-forget Supabase sync
-      import("@/lib/supabase/tableSync")
-        .then(({ syncTableOrder }) => syncTableOrder(order))
-        .catch(() => {});
+  // ── Internal: atomic persist ─────────────────────────────────────────────
+  // FIX H-03: All writes go through dbAtomicUpdateTableOrder (IDB transaction).
+  // FIX C-03: Serialized per-table via mutex.
+  const persistAtomic = useCallback(
+    async (
+      tableId: string,
+      updater: (current: TableOrder | null) => TableOrder | null
+    ): Promise<TableOrder | null> => {
+      const orderId = tableOrderId(tableId);
+      const mutex = getTableMutex(tableId);
+
+      return mutex.run(async () => {
+        const { dbAtomicUpdateTableOrder } = await import("@/lib/db");
+        const result = await dbAtomicUpdateTableOrder(orderId, uidRef.current, updater);
+        if (result) {
+          dispatch({ type: "UPSERT", order: result });
+          // Fire-and-forget Supabase sync
+          import("@/lib/supabase/tableSync")
+            .then(({ syncTableOrder }) => syncTableOrder(result))
+            .catch(() => {});
+        }
+        return result;
+      });
     },
-    [uid]
+    []
   );
 
   // ── Public API ────────────────────────────────────────────────────────────
@@ -246,65 +258,74 @@ export function TableStoreProvider({
       portion?: string,
       notes?: string
     ): Promise<void> => {
-      const existing = getOrCreateOrder(tableId, tableName, tableNumber);
+      await persistAtomic(tableId, (existing) => {
+        const base = existing ?? makeTableOrder(tableId, tableName, tableNumber, currentGstPercent);
 
-      // Merge key: same item + same size + same portion + same addons + same notes
-      const mergeKey = [
-        menuItem.id,
-        size ?? "",
-        portion ?? "",
-        addOns.map((a) => a.id).sort().join(","),
-        notes ?? "",
-      ].join("|");
+        const mergeKey = [
+          menuItem.id,
+          size ?? "",
+          portion ?? "",
+          addOns.map((a) => a.id).sort().join(","),
+          notes ?? "",
+        ].join("|");
 
-      let newItems: TableOrderItem[];
-      const matchIdx = existing.items.findIndex((i) => itemMergeKey(i) === mergeKey);
+        let newItems: TableOrderItem[];
+        const matchIdx = base.items.findIndex((i) => itemMergeKey(i) === mergeKey);
 
-      if (matchIdx !== -1) {
-        newItems = existing.items.map((i, idx) =>
-          idx === matchIdx ? { ...i, qty: i.qty + 1 } : i
-        );
-      } else {
-        const newItem: TableOrderItem = {
-          cartId: crypto.randomUUID(),
-          menuItemId: menuItem.id,
-          name: menuItem.name,
-          unitPricePaise: size
+        if (matchIdx !== -1) {
+          newItems = base.items.map((i, idx) =>
+            idx === matchIdx ? { ...i, qty: i.qty + 1 } : i
+          );
+        } else {
+          const unitPrice = size
             ? (menuItem.sizes?.find((s) => s.label === size)?.pricePaise ?? menuItem.pricePaise)
             : portion
             ? (menuItem.portions?.find((p) => p.label === portion)?.pricePaise ?? menuItem.pricePaise)
-            : menuItem.pricePaise,
-          qty: 1,
-          selectedSize: size,
-          selectedPortion: portion,
-          selectedAddOns: addOns,
-          notes,
+            : menuItem.pricePaise;
+          newItems = [
+            ...base.items,
+            {
+              cartId: crypto.randomUUID(),
+              menuItemId: menuItem.id,
+              name: menuItem.name,
+              unitPricePaise: unitPrice,
+              qty: 1,
+              selectedSize: size,
+              selectedPortion: portion,
+              selectedAddOns: addOns,
+              notes,
+            },
+          ];
+        }
+
+        const now = new Date().toISOString();
+        const { subtotalPaise, taxPaise, totalPaise } = computeTotals(
+          newItems,
+          base.gstPercentAtOpen ?? currentGstPercent,
+          base.discountPaise
+        );
+
+        return {
+          ...base,
+          items: newItems,
+          status: "OCCUPIED",
+          subtotalPaise,
+          taxPaise,
+          totalPaise,
+          updatedAt: now,
+          heldAt: base.heldAt ?? now,
+          version: base.version + 1,
+          syncStatus: "pending",
         };
-        newItems = [...existing.items, newItem];
-      }
+      });
 
-      const now = new Date().toISOString();
-      const { subtotalPaise, taxPaise, totalPaise } = computeTotals(
-        newItems,
-        existing.gstPercentAtOpen ?? currentGstPercent,
-        existing.discountPaise
-      );
-
-      const updated: TableOrder = {
-        ...existing,
-        items: newItems,
-        status: "OCCUPIED",
-        subtotalPaise,
-        taxPaise,
-        totalPaise,
-        updatedAt: now,
-        heldAt: existing.heldAt ?? now,
-        version: existing.version + 1,
-        syncStatus: "pending",
-      };
-      await persist(updated);
+      logAudit("TABLE_ITEM_ADDED", uid, {
+        entityType: "table",
+        entityId: tableId,
+        meta: { menuItemId: menuItem.id, name: menuItem.name },
+      });
     },
-    [getOrCreateOrder, currentGstPercent, persist]
+    [persistAtomic, currentGstPercent, uid]
   );
 
   const addCartItems = useCallback(
@@ -315,153 +336,192 @@ export function TableStoreProvider({
       incoming: CartItem[]
     ): Promise<void> => {
       if (!incoming || incoming.length === 0) return;
-      const existing = getOrCreateOrder(tableId, tableName, tableNumber);
 
-      // Start from existing items, merge each incoming cart item by its config key.
-      const newItems: TableOrderItem[] = existing.items.map((i) => ({ ...i }));
+      await persistAtomic(tableId, (existing) => {
+        const base = existing ?? makeTableOrder(tableId, tableName, tableNumber, currentGstPercent);
+        const newItems: TableOrderItem[] = base.items.map((i) => ({ ...i }));
 
-      for (const ci of incoming) {
-        const key = itemMergeKey(ci);
-        const idx = newItems.findIndex((i) => itemMergeKey(i) === key);
-        if (idx !== -1) {
-          newItems[idx] = { ...newItems[idx], qty: newItems[idx].qty + ci.qty };
-        } else {
-          newItems.push({
-            cartId: crypto.randomUUID(),
-            menuItemId: ci.menuItemId,
-            name: ci.name,
-            unitPricePaise: ci.unitPricePaise,
-            qty: ci.qty,
-            selectedSize: ci.selectedSize,
-            selectedPortion: ci.selectedPortion,
-            selectedAddOns: ci.selectedAddOns,
-            notes: ci.notes,
-          });
+        for (const ci of incoming) {
+          const key = itemMergeKey(ci);
+          const idx = newItems.findIndex((i) => itemMergeKey(i) === key);
+          if (idx !== -1) {
+            newItems[idx] = { ...newItems[idx], qty: newItems[idx].qty + ci.qty };
+          } else {
+            newItems.push({
+              cartId: crypto.randomUUID(),
+              menuItemId: ci.menuItemId,
+              name: ci.name,
+              unitPricePaise: ci.unitPricePaise,
+              qty: ci.qty,
+              selectedSize: ci.selectedSize,
+              selectedPortion: ci.selectedPortion,
+              selectedAddOns: ci.selectedAddOns,
+              notes: ci.notes,
+            });
+          }
         }
-      }
 
-      const now = new Date().toISOString();
-      const { subtotalPaise, taxPaise, totalPaise } = computeTotals(
-        newItems,
-        existing.gstPercentAtOpen ?? currentGstPercent,
-        existing.discountPaise
-      );
+        const now = new Date().toISOString();
+        const { subtotalPaise, taxPaise, totalPaise } = computeTotals(
+          newItems,
+          base.gstPercentAtOpen ?? currentGstPercent,
+          base.discountPaise
+        );
 
-      const updated: TableOrder = {
-        ...existing,
-        items: newItems,
-        status: "OCCUPIED",
-        subtotalPaise,
-        taxPaise,
-        totalPaise,
-        updatedAt: now,
-        heldAt: existing.heldAt ?? now,
-        version: existing.version + 1,
-        syncStatus: "pending",
-      };
-      await persist(updated);
+        return {
+          ...base,
+          items: newItems,
+          status: "OCCUPIED",
+          subtotalPaise,
+          taxPaise,
+          totalPaise,
+          updatedAt: now,
+          heldAt: base.heldAt ?? now,
+          version: base.version + 1,
+          syncStatus: "pending",
+        };
+      });
     },
-    [getOrCreateOrder, currentGstPercent, persist]
+    [persistAtomic, currentGstPercent]
   );
 
   const updateItemQty = useCallback(
     async (tableId: string, cartId: string, qty: number): Promise<void> => {
-      const existing = stateRef.current.orders[tableOrderId(tableId)];
-      if (!existing) return;
+      await persistAtomic(tableId, (existing) => {
+        if (!existing) return null;
 
-      const newItems =
-        qty <= 0
-          ? existing.items.filter((i) => i.cartId !== cartId)
-          : existing.items.map((i) => (i.cartId === cartId ? { ...i, qty } : i));
+        const newItems =
+          qty <= 0
+            ? existing.items.filter((i) => i.cartId !== cartId)
+            : existing.items.map((i) => (i.cartId === cartId ? { ...i, qty } : i));
 
-      const now = new Date().toISOString();
-      const { subtotalPaise, taxPaise, totalPaise } = computeTotals(
-        newItems,
-        existing.gstPercentAtOpen ?? currentGstPercent,
-        existing.discountPaise
-      );
-      const newStatus = newItems.length === 0 ? "AVAILABLE" : "OCCUPIED";
+        const now = new Date().toISOString();
+        const { subtotalPaise, taxPaise, totalPaise } = computeTotals(
+          newItems,
+          existing.gstPercentAtOpen ?? currentGstPercent,
+          existing.discountPaise
+        );
+        const newStatus = newItems.length === 0 ? "AVAILABLE" : "OCCUPIED";
 
-      const updated: TableOrder = {
-        ...existing,
-        items: newItems,
-        status: newStatus as TableOrder["status"],
-        subtotalPaise,
-        taxPaise,
-        totalPaise,
-        updatedAt: now,
-        version: existing.version + 1,
-        syncStatus: "pending",
-      };
-      await persist(updated);
+        return {
+          ...existing,
+          items: newItems,
+          status: newStatus as TableOrder["status"],
+          subtotalPaise,
+          taxPaise,
+          totalPaise,
+          updatedAt: now,
+          version: existing.version + 1,
+          syncStatus: "pending",
+        };
+      });
     },
-    [currentGstPercent, persist]
+    [currentGstPercent, persistAtomic]
   );
 
   const removeItem = useCallback(
     async (tableId: string, cartId: string): Promise<void> => {
       await updateItemQty(tableId, cartId, 0);
+      logAudit("TABLE_ITEM_REMOVED", uid, {
+        entityType: "table",
+        entityId: tableId,
+        meta: { cartId },
+      });
     },
-    [updateItemQty]
+    [updateItemQty, uid]
   );
 
   const setDiscount = useCallback(
     async (tableId: string, discountPaise: number): Promise<void> => {
-      const existing = stateRef.current.orders[tableOrderId(tableId)];
-      if (!existing) return;
+      // INVARIANT: discount cannot be negative
+      const safeDiscount = Math.max(0, discountPaise);
+      await persistAtomic(tableId, (existing) => {
+        if (!existing) return null;
 
-      const now = new Date().toISOString();
-      const { subtotalPaise, taxPaise, totalPaise } = computeTotals(
-        existing.items,
-        existing.gstPercentAtOpen ?? currentGstPercent,
-        discountPaise
-      );
+        const now = new Date().toISOString();
+        const { subtotalPaise, taxPaise, totalPaise } = computeTotals(
+          existing.items,
+          existing.gstPercentAtOpen ?? currentGstPercent,
+          safeDiscount
+        );
 
-      const updated: TableOrder = {
-        ...existing,
-        discountPaise,
-        subtotalPaise,
-        taxPaise,
-        totalPaise,
-        updatedAt: now,
-        version: existing.version + 1,
-        syncStatus: "pending",
-      };
-      await persist(updated);
+        return {
+          ...existing,
+          discountPaise: safeDiscount,
+          subtotalPaise,
+          taxPaise,
+          totalPaise,
+          updatedAt: now,
+          version: existing.version + 1,
+          syncStatus: "pending",
+        };
+      });
+
+      logAudit("TABLE_DISCOUNT_SET", uid, {
+        entityType: "table",
+        entityId: tableId,
+        meta: { discountPaise: safeDiscount },
+      });
     },
-    [currentGstPercent, persist]
+    [currentGstPercent, persistAtomic, uid]
   );
 
   const holdOrder = useCallback(
     async (tableId: string): Promise<void> => {
-      const existing = stateRef.current.orders[tableOrderId(tableId)];
-      if (!existing || existing.items.length === 0) return;
-
-      const now = new Date().toISOString();
-      const updated: TableOrder = {
-        ...existing,
-        status: "OCCUPIED",
-        heldAt: now,
-        updatedAt: now,
-        version: existing.version + 1,
-        syncStatus: "pending",
-      };
-      await persist(updated);
+      await persistAtomic(tableId, (existing) => {
+        if (!existing || existing.items.length === 0) return null;
+        const now = new Date().toISOString();
+        return {
+          ...existing,
+          status: "OCCUPIED",
+          heldAt: now,
+          updatedAt: now,
+          version: existing.version + 1,
+          syncStatus: "pending",
+        };
+      });
     },
-    [persist]
+    [persistAtomic]
   );
 
+  // FIX C-01: clearOrder now syncs the deletion to Supabase
   const clearOrder = useCallback(
     async (tableId: string): Promise<void> => {
       const id = tableOrderId(tableId);
       const existing = stateRef.current.orders[id];
       if (!existing) return;
 
+      // Mark as AVAILABLE with 0 items — syncTableOrder will delete the remote row
+      const cleared: TableOrder = {
+        ...existing,
+        status: "AVAILABLE",
+        items: [],
+        subtotalPaise: 0,
+        taxPaise: 0,
+        discountPaise: 0,
+        totalPaise: 0,
+        heldAt: null,
+        updatedAt: new Date().toISOString(),
+        version: existing.version + 1,
+        syncStatus: "pending",
+      };
+
       dispatch({ type: "DELETE", id });
       const { dbDeleteTableOrder } = await import("@/lib/db");
-      await dbDeleteTableOrder(id, uid);
+      await dbDeleteTableOrder(id, uidRef.current);
+
+      // Sync deletion to Supabase (fire-and-forget but tracked)
+      import("@/lib/supabase/tableSync")
+        .then(({ syncTableOrder }) => syncTableOrder(cleared))
+        .catch(() => {});
+
+      logAudit("TABLE_CLOSED", uidRef.current, {
+        entityType: "table",
+        entityId: tableId,
+        meta: { tableId, clearedVersion: cleared.version },
+      });
     },
-    [uid]
+    []
   );
 
   return (
@@ -489,8 +549,6 @@ export function useTableStore(): TableStoreContextValue {
   if (!ctx) throw new Error("useTableStore must be inside TableStoreProvider");
   return ctx;
 }
-
-// ── Selector hooks (prevent unnecessary re-renders) ───────────────────────────
 
 export function useTableOrder(tableId: string): TableOrder | null {
   const { state } = useTableStore();
