@@ -1,6 +1,7 @@
 import { getSupabase, isSupabaseEnabled } from "./client";
-import { dbUpdateTableOrderSyncStatus } from "@/lib/db";
+import { dbUpdateTableOrderSyncStatus, dbAtomicUpdateTableOrder } from "@/lib/db";
 import type { TableOrder } from "@/lib/types";
+import { recordSyncFailure, recordSyncSuccess } from "@/lib/utils/observability";
 
 // ── Sync single table order ───────────────────────────────────────────────────
 export async function syncTableOrder(order: TableOrder): Promise<boolean> {
@@ -11,9 +12,18 @@ export async function syncTableOrder(order: TableOrder): Promise<boolean> {
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return false;
 
+    // FIX C-01: Always sync to Supabase — even for AVAILABLE/empty orders.
+    // For cleared tables, delete the remote row. This was the ghost-occupied bug.
     if (order.status === "AVAILABLE" || order.items.length === 0) {
-      await sb.from("table_orders").delete().eq("id", order.id).eq("user_id", user.id);
+      const { error } = await sb
+        .from("table_orders")
+        .delete()
+        .eq("id", order.id)
+        .eq("user_id", user.id);
+      // Not-found is not an error — row may never have been synced
+      if (error && error.code !== "PGRST116") throw error;
       await dbUpdateTableOrderSyncStatus(order.id, "synced");
+      recordSyncSuccess();
       return true;
     }
 
@@ -34,7 +44,6 @@ export async function syncTableOrder(order: TableOrder): Promise<boolean> {
         created_at: order.createdAt,
         updated_at: order.updatedAt,
         version: order.version,
-        // P0-08: persist locked GST rate
         gst_percent_at_open: order.gstPercentAtOpen ?? null,
       },
       { onConflict: "id" }
@@ -42,14 +51,16 @@ export async function syncTableOrder(order: TableOrder): Promise<boolean> {
 
     if (error) throw error;
     await dbUpdateTableOrderSyncStatus(order.id, "synced");
+    recordSyncSuccess();
     return true;
   } catch {
     await dbUpdateTableOrderSyncStatus(order.id, "failed").catch(() => {});
+    recordSyncFailure();
     return false;
   }
 }
 
-// ── P1-04: Bulk sync pending table orders ─────────────────────────────────────
+// ── Bulk sync pending table orders ────────────────────────────────────────────
 export async function syncAllPendingTableOrders(uid: string): Promise<void> {
   if (!isSupabaseEnabled()) return;
   try {
@@ -61,9 +72,20 @@ export async function syncAllPendingTableOrders(uid: string): Promise<void> {
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return;
 
-    const rows = pending
-      .filter((o) => o.status === "OCCUPIED" && o.items.length > 0)
-      .map((order) => ({
+    // FIX H-02: Sync ALL pending orders regardless of status (not just OCCUPIED)
+    // AVAILABLE orders need to delete their remote row
+    const toDelete = pending.filter((o) => o.status === "AVAILABLE" || o.items.length === 0);
+    const toUpsert = pending.filter((o) => o.status === "OCCUPIED" && o.items.length > 0);
+
+    // Delete cleared tables from Supabase
+    for (const order of toDelete) {
+      await sb.from("table_orders").delete().eq("id", order.id).eq("user_id", user.id)
+        .then(() => dbUpdateTableOrderSyncStatus(order.id, "synced"))
+        .catch(() => {});
+    }
+
+    if (toUpsert.length > 0) {
+      const rows = toUpsert.map((order) => ({
         id: order.id,
         user_id: user.id,
         table_id: order.tableId,
@@ -82,21 +104,21 @@ export async function syncAllPendingTableOrders(uid: string): Promise<void> {
         gst_percent_at_open: order.gstPercentAtOpen ?? null,
       }));
 
-    if (rows.length > 0) {
       const { error } = await sb.from("table_orders").upsert(rows, { onConflict: "id" });
       if (!error) {
-        for (const o of pending) await dbUpdateTableOrderSyncStatus(o.id, "synced");
+        for (const o of toUpsert) await dbUpdateTableOrderSyncStatus(o.id, "synced");
+        recordSyncSuccess();
         return;
       }
     }
     // Fallback: individual
     for (const order of pending) await syncTableOrder(order);
   } catch {
-    // silent
+    recordSyncFailure();
   }
 }
 
-// ── Restore from Supabase (on login / reconnect) ──────────────────────────────
+// ── Restore from Supabase ─────────────────────────────────────────────────────
 export async function restoreTableOrdersFromSupabase(uid: string): Promise<void> {
   if (!isSupabaseEnabled()) return;
   const sb = getSupabase();
@@ -105,19 +127,22 @@ export async function restoreTableOrdersFromSupabase(uid: string): Promise<void>
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return;
 
+    // FIX H-06: Fetch ALL table orders (not just OCCUPIED) so we can clear
+    // stale local OCCUPIED records that were cleared on another device
     const { data: remoteOrders, error } = await sb
       .from("table_orders")
       .select("*")
-      .eq("user_id", user.id)
-      .eq("status", "OCCUPIED");
+      .eq("user_id", user.id);
 
-    if (error || !remoteOrders?.length) return;
+    if (error) return;
 
-    const { dbGetAllTableOrders, dbSaveTableOrder } = await import("@/lib/db");
+    const { dbGetAllTableOrders, dbSaveTableOrder, dbDeleteTableOrder } = await import("@/lib/db");
     const localOrders = await dbGetAllTableOrders(uid);
     const localMap = new Map(localOrders.map((o) => [o.id, o]));
+    const remoteIds = new Set((remoteOrders ?? []).map((r) => r.id));
 
-    for (const remote of remoteOrders) {
+    // Apply remote state (newer wins)
+    for (const remote of (remoteOrders ?? [])) {
       const local = localMap.get(remote.id);
       if (!local || remote.version > local.version) {
         const order: TableOrder = {
@@ -141,13 +166,20 @@ export async function restoreTableOrdersFromSupabase(uid: string): Promise<void>
         await dbSaveTableOrder(order, uid);
       }
     }
+
+    // FIX H-06: Remove local OCCUPIED orders that no longer exist on remote
+    // (they were cleared by another device while this device was offline)
+    for (const local of localOrders) {
+      if (!remoteIds.has(local.id) && local.status === "OCCUPIED" && local.syncStatus === "synced") {
+        await dbDeleteTableOrder(local.id, uid);
+      }
+    }
   } catch {
     // silent
   }
 }
 
-// ── P1-01: Supabase Realtime subscription for table state ─────────────────────
-// Returns unsubscribe fn. Call in TableStoreProvider useEffect.
+// ── Realtime subscription ─────────────────────────────────────────────────────
 export function subscribeToTableOrders(
   userId: string,
   onUpdate: (order: TableOrder) => void,
@@ -170,6 +202,9 @@ export function subscribeToTableOrders(
       async (payload) => {
         if (payload.eventType === "DELETE") {
           onDelete(payload.old.id as string);
+          // FIX H-06: Also clean up IDB when remote deletes
+          const { dbDeleteTableOrder } = await import("@/lib/db");
+          await dbDeleteTableOrder(payload.old.id as string, userId).catch(() => {});
           return;
         }
         const remote = payload.new as Record<string, unknown>;
@@ -191,8 +226,6 @@ export function subscribeToTableOrders(
           syncStatus: "synced",
           gstPercentAtOpen: (remote.gst_percent_at_open as number) ?? undefined,
         };
-        // Save to IDB using the userId captured at subscription time —
-        // never re-read localStorage inside a realtime callback (stale/wrong-user risk)
         const { dbSaveTableOrder } = await import("@/lib/db");
         await dbSaveTableOrder(order, userId);
         onUpdate(order);
