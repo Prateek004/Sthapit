@@ -8,8 +8,9 @@ import {
   dbBulkSaveCategories,
 } from "@/lib/db";
 import type { Order, MenuItem, MenuCategory } from "@/lib/types";
+import { recordSyncFailure, recordSyncSuccess, setOfflineQueueSize } from "@/lib/utils/observability";
 
-// ── P0-04: Sync status tracking (readable by UI) ──────────────────────────────
+// ── P0-04: Sync status tracking ───────────────────────────────────────────────
 let _pendingCount = 0;
 let _isOnline = typeof navigator !== "undefined" ? navigator.onLine : true;
 const _listeners = new Set<() => void>();
@@ -26,6 +27,7 @@ function notifySyncListeners() {
 }
 function setPending(n: number) {
   _pendingCount = n;
+  setOfflineQueueSize(n);
   notifySyncListeners();
 }
 function setOnline(v: boolean) {
@@ -33,7 +35,27 @@ function setOnline(v: boolean) {
   notifySyncListeners();
 }
 
-// ── P0-03: Menu sync to Supabase ──────────────────────────────────────────────
+// ── Exponential backoff retry ─────────────────────────────────────────────────
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  maxAttempts = 3,
+  baseDelayMs = 500
+): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (attempt < maxAttempts - 1) {
+        await new Promise((r) => setTimeout(r, baseDelayMs * Math.pow(2, attempt)));
+      }
+    }
+  }
+  throw lastErr;
+}
+
+// ── P0-03: Menu sync ──────────────────────────────────────────────────────────
 export async function syncMenu(uid: string): Promise<void> {
   if (!isSupabaseEnabled()) return;
   const sb = getSupabase();
@@ -48,40 +70,46 @@ export async function syncMenu(uid: string): Promise<void> {
     ]);
 
     if (items.length > 0) {
-      await sb.from("menu_items").upsert(
-        items.map((i) => ({
-          id: i.id,
-          user_id: user.id,
-          name: i.name,
-          category_id: i.categoryId,
-          price_paise: i.pricePaise,
-          cost_price_paise: i.costPricePaise ?? null,
-          is_veg: i.isVeg,
-          is_available: i.isAvailable,
-          add_ons: i.addOns,
-          sizes: i.sizes ?? null,
-          portion_enabled: i.portionEnabled ?? false,
-          portions: i.portions ?? null,
-          fast_add: i.fastAdd ?? false,
-          updated_at: i.updatedAt ?? new Date().toISOString(),
-        })),
-        { onConflict: "id" }
+      await withRetry(() =>
+        sb.from("menu_items").upsert(
+          items.map((i) => ({
+            id: i.id,
+            user_id: user.id,
+            name: i.name,
+            category_id: i.categoryId,
+            price_paise: i.pricePaise,
+            cost_price_paise: i.costPricePaise ?? null,
+            is_veg: i.isVeg,
+            is_available: i.isAvailable,
+            add_ons: i.addOns,
+            sizes: i.sizes ?? null,
+            portion_enabled: i.portionEnabled ?? false,
+            portions: i.portions ?? null,
+            fast_add: i.fastAdd ?? false,
+            updated_at: i.updatedAt ?? new Date().toISOString(),
+          })),
+          { onConflict: "id" }
+        ).then(({ error }) => { if (error) throw error; })
       );
     }
 
     if (categories.length > 0) {
-      await sb.from("menu_categories").upsert(
-        categories.map((c) => ({
-          id: c.id,
-          user_id: user.id,
-          name: c.name,
-          sort_order: c.sortOrder,
-          updated_at: c.updatedAt ?? new Date().toISOString(),
-        })),
-        { onConflict: "id" }
+      await withRetry(() =>
+        sb.from("menu_categories").upsert(
+          categories.map((c) => ({
+            id: c.id,
+            user_id: user.id,
+            name: c.name,
+            sort_order: c.sortOrder,
+            updated_at: c.updatedAt ?? new Date().toISOString(),
+          })),
+          { onConflict: "id" }
+        ).then(({ error }) => { if (error) throw error; })
       );
     }
+    recordSyncSuccess();
   } catch {
+    recordSyncFailure();
     // non-fatal — local data is safe
   }
 }
@@ -94,7 +122,6 @@ export async function restoreMenuFromSupabase(uid: string): Promise<void> {
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return;
 
-    // Only restore if local IDB is empty (fresh device / IDB wiped)
     const localItems = await dbGetAllMenuItems(uid);
     if (localItems.length > 0) return;
 
@@ -131,12 +158,16 @@ export async function restoreMenuFromSupabase(uid: string): Promise<void> {
       }));
       await dbBulkSaveMenuItems(items, uid);
     }
+    recordSyncSuccess();
   } catch {
-    // non-fatal
+    recordSyncFailure();
   }
 }
 
-// ── P0-02: Bill counter sync ──────────────────────────────────────────────────
+// ── P0-02: Bill counter ───────────────────────────────────────────────────────
+// Mutex per session to prevent concurrent getNextBillCounter calls
+const _billMutexMap = new Map<string, Promise<number | null>>();
+
 export async function getNextBillCounterFromSupabase(): Promise<number | null> {
   if (!isSupabaseEnabled()) return null;
   const sb = getSupabase();
@@ -144,9 +175,25 @@ export async function getNextBillCounterFromSupabase(): Promise<number | null> {
   try {
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return null;
-    const { data, error } = await sb.rpc("increment_bill_counter", { p_user_id: user.id });
-    if (error) return null;
-    return data as number;
+
+    // Serialize per-user to prevent duplicate bill numbers from concurrent checkouts
+    const key = user.id;
+    const pending = _billMutexMap.get(key);
+    if (pending) return pending;
+
+    const promise = sb.rpc("increment_bill_counter", { p_user_id: user.id })
+      .then(({ data, error }) => {
+        _billMutexMap.delete(key);
+        if (error) return null;
+        return data as number;
+      })
+      .catch(() => {
+        _billMutexMap.delete(key);
+        return null;
+      });
+
+    _billMutexMap.set(key, promise);
+    return promise;
   } catch {
     return null;
   }
@@ -160,43 +207,47 @@ export async function syncOrder(order: Order): Promise<boolean> {
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return false;
 
-    const { error } = await sb.from("orders").upsert(
-      {
-        id: order.id,
-        user_id: user.id,
-        bill_number: order.billNumber,
-        items: order.items,
-        service_mode: order.serviceMode,
-        table_number: order.tableNumber ?? null,
-        subtotal_paise: Math.round(order.subtotalPaise),
-        discount_paise: Math.round(order.discountPaise),
-        discount_type: order.discountType,
-        discount_value: order.discountValue,
-        gst_percent: order.gstPercent,
-        gst_paise: Math.round(order.gstPaise),
-        total_paise: Math.round(order.totalPaise),
-        payment_method: order.paymentMethod,
-        split_payment: order.splitPayment ?? null,
-        cash_received_paise: order.cashReceivedPaise != null ? Math.round(order.cashReceivedPaise) : null,
-        change_paise: order.changePaise != null ? Math.round(order.changePaise) : null,
-        created_at: order.createdAt,
-        status: order.status ?? "completed",
-        voided_at: order.voidedAt ?? null,
-        void_reason: order.voidReason ?? null,
-      },
-      { onConflict: "id" }
+    const { error } = await withRetry(() =>
+      sb.from("orders").upsert(
+        {
+          id: order.id,
+          user_id: user.id,
+          bill_number: order.billNumber,
+          items: order.items,
+          service_mode: order.serviceMode,
+          table_number: order.tableNumber ?? null,
+          subtotal_paise: Math.round(order.subtotalPaise),
+          discount_paise: Math.round(order.discountPaise),
+          discount_type: order.discountType,
+          discount_value: order.discountValue,
+          gst_percent: order.gstPercent,
+          gst_paise: Math.round(order.gstPaise),
+          total_paise: Math.round(order.totalPaise),
+          payment_method: order.paymentMethod,
+          split_payment: order.splitPayment ?? null,
+          cash_received_paise: order.cashReceivedPaise != null ? Math.round(order.cashReceivedPaise) : null,
+          change_paise: order.changePaise != null ? Math.round(order.changePaise) : null,
+          created_at: order.createdAt,
+          status: order.status ?? "completed",
+          voided_at: order.voidedAt ?? null,
+          void_reason: order.voidReason ?? null,
+        },
+        { onConflict: "id" }
+      )
     );
 
     if (error) throw error;
     await dbUpdateSyncStatus(order.id, "synced");
+    recordSyncSuccess();
     return true;
   } catch {
     await dbUpdateSyncStatus(order.id, "failed");
+    recordSyncFailure();
     return false;
   }
 }
 
-// ── P1-04: Bulk sync — replace sequential loop ────────────────────────────────
+// ── Bulk sync ─────────────────────────────────────────────────────────────────
 async function bulkSyncOrders(pending: Order[]): Promise<void> {
   if (!pending.length) return;
   const sb = getSupabase();
@@ -232,8 +283,9 @@ async function bulkSyncOrders(pending: Order[]): Promise<void> {
     const { error } = await sb.from("orders").upsert(rows, { onConflict: "id" });
     if (!error) {
       for (const o of pending) await dbUpdateSyncStatus(o.id, "synced");
+      recordSyncSuccess();
     } else {
-      // Bulk failed — fall back to individual
+      // Bulk failed — fall back to individual with retry
       for (const o of pending) await syncOrder(o);
     }
   } catch {
@@ -241,13 +293,16 @@ async function bulkSyncOrders(pending: Order[]): Promise<void> {
   }
 }
 
-// ── P0-04: backgroundSync with reconnect + interval ──────────────────────────
+// ── P0-04: backgroundSync ─────────────────────────────────────────────────────
 let _syncInterval: ReturnType<typeof setInterval> | null = null;
 let _syncUid: string | null = null;
+let _syncInFlight = false;
 
 export async function backgroundSync(userId: string): Promise<void> {
   if (!isSupabaseEnabled()) return;
+  if (_syncInFlight) return; // Prevent concurrent sync runs
   _syncUid = userId;
+  _syncInFlight = true;
   try {
     const pending = await dbGetPendingOrders(userId);
     setPending(pending.length);
@@ -259,7 +314,10 @@ export async function backgroundSync(userId: string): Promise<void> {
     const { syncAllPendingTableOrders } = await import("@/lib/supabase/tableSync");
     await syncAllPendingTableOrders(userId);
   } catch {
+    recordSyncFailure();
     /* silent — never blocks UI */
+  } finally {
+    _syncInFlight = false;
   }
 }
 
@@ -281,7 +339,7 @@ export function startSyncListeners(userId: string): () => void {
   // 60-second interval sync
   if (_syncInterval) clearInterval(_syncInterval);
   _syncInterval = setInterval(() => {
-    if (_syncUid && _isOnline) backgroundSync(_syncUid).catch(() => {});
+    if (_syncUid && _isOnline && !_syncInFlight) backgroundSync(_syncUid).catch(() => {});
   }, 60_000);
 
   return () => {
