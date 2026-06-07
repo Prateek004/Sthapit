@@ -37,7 +37,7 @@ function setOnline(v: boolean) {
 
 // ── Exponential backoff retry ─────────────────────────────────────────────────
 async function withRetry<T>(
-  fn: () => Promise<T>,
+  fn: () => PromiseLike<T>,
   maxAttempts = 3,
   baseDelayMs = 500
 ): Promise<T> {
