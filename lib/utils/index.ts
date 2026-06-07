@@ -148,3 +148,42 @@ export function cn(
 ): string {
   return classes.filter(Boolean).join(" ");
 }
+
+// ── Permission foundation ─────────────────────────────────────────────────────
+// Single source of truth for role-based access.
+// UI visibility and data-layer guards must both call canPerform() so they
+// can never diverge.
+//
+// Usage:
+//   canPerform("manageSettings", session)  → true for owner only
+//   canPerform("voidOrder", session)        → true for owner only
+//   canPerform("placeOrder", session)       → true for owner + cashier
+//   canPerform("viewReports", session)      → true for owner only
+
+import type { UserSession } from "@/lib/types";
+
+type Permission =
+  | "placeOrder"
+  | "manageMenu"
+  | "manageSettings"
+  | "voidOrder"
+  | "viewReports"
+  | "manageStock";
+
+const OWNER_ONLY: Permission[] = [
+  "manageMenu",
+  "manageSettings",
+  "voidOrder",
+  "viewReports",
+  "manageStock",
+];
+
+export function canPerform(
+  action: Permission,
+  session: UserSession | null | undefined
+): boolean {
+  if (!session) return false;
+  if (session.role === "owner") return true;
+  // cashier: only non-destructive POS operations
+  return !OWNER_ONLY.includes(action);
+}
