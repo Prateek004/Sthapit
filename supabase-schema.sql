@@ -171,3 +171,8 @@ CREATE INDEX IF NOT EXISTS orders_status_idx ON orders (user_id, status, created
 
 -- P1-01: Enable Realtime for table_orders
 ALTER PUBLICATION supabase_realtime ADD TABLE table_orders;
+
+-- FIX: stock_settings JSONB column on profiles — stores tablesEnabled, kotEnabled,
+-- barEnabled, tableCount, openTableBilling, gstInclusive per business.
+-- Written by settings page, read on login to sync config across devices.
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS stock_settings JSONB;
