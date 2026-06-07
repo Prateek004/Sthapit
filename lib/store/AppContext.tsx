@@ -18,7 +18,7 @@ import type {
   ServiceMode,
   OpenTable,
 } from "@/lib/types";
-import { calcDiscount, calcGST, generateBillNumber } from "@/lib/utils";
+import { calcDiscount, calcGST, generateBillNumber, canPerform } from "@/lib/utils";
 import { MENU_TEMPLATES } from "@/lib/utils/menuTemplates";
 import { getSupabase, isSupabaseEnabled } from "@/lib/supabase/client";
 import { TableStoreProvider } from "@/lib/store/tableStore";
@@ -139,9 +139,10 @@ function loadCartFromLocalStorage(): CartItem[] {
   }
 }
 
+// UIState: only non-session-specific preferences that should survive logout.
+// tableNumber is deliberately excluded — it is session-specific and must reset
+// on every login/logout so a shared device does not expose a prior user's table.
 interface UIState {
-  serviceMode: ServiceMode;
-  tableNumber: number | undefined;
   activeStockTab: string;
   posActiveCat: string;
   ordersFilter: "today" | "all";
@@ -158,11 +159,9 @@ function saveUI(ui: UIState): void {
 function loadUI(): UIState {
   try {
     const raw = localStorage.getItem(UI_KEY);
-    if (!raw) return { serviceMode: "dine_in", tableNumber: undefined, activeStockTab: "menu", posActiveCat: "all", ordersFilter: "today", ordersTab: "orders", ordersTableView: "map" };
+    if (!raw) return { activeStockTab: "menu", posActiveCat: "all", ordersFilter: "today", ordersTab: "orders", ordersTableView: "map" };
     const parsed = JSON.parse(raw) as Partial<UIState>;
     return {
-      serviceMode: parsed.serviceMode ?? "dine_in",
-      tableNumber: parsed.tableNumber,
       activeStockTab: parsed.activeStockTab ?? "menu",
       posActiveCat: parsed.posActiveCat ?? "all",
       ordersFilter: parsed.ordersFilter ?? "today",
@@ -170,7 +169,7 @@ function loadUI(): UIState {
       ordersTableView: parsed.ordersTableView ?? "map",
     };
   } catch {
-    return { serviceMode: "dine_in", tableNumber: undefined, activeStockTab: "menu", posActiveCat: "all", ordersFilter: "today", ordersTab: "orders", ordersTableView: "map" };
+    return { activeStockTab: "menu", posActiveCat: "all", ordersFilter: "today", ordersTab: "orders", ordersTableView: "map" };
   }
 }
 
@@ -255,8 +254,6 @@ type Action =
       orders: Order[];
       openTables: OpenTable[];
       cart: CartItem[];
-      serviceMode: ServiceMode;
-      tableNumber: number | undefined;
       activeStockTab: string;
       posActiveCat: string;
       ordersFilter: "today" | "all";
@@ -302,8 +299,11 @@ function reducer(state: AppState, action: Action): AppState {
         orders: action.orders,
         openTables: action.openTables,
         cart: action.cart,
-        serviceMode: action.serviceMode,
-        tableNumber: action.tableNumber,
+        // serviceMode and tableNumber are NOT restored from persisted UI —
+        // they are session-specific and must reset on every login to prevent
+        // shared-device leakage.
+        serviceMode: "dine_in",
+        tableNumber: undefined,
         activeStockTab: action.activeStockTab,
         posActiveCat: action.posActiveCat,
         ordersFilter: action.ordersFilter,
@@ -532,8 +532,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
             session: null,
             items: [], categories: [], orders: [], openTables: [],
             cart: [],
-            serviceMode: ui.serviceMode,
-            tableNumber: ui.tableNumber,
             activeStockTab: ui.activeStockTab,
             posActiveCat: ui.posActiveCat,
             ordersFilter: ui.ordersFilter,
@@ -553,8 +551,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
         dispatch({
           type: "INIT_DONE",
           session, items, categories, orders, openTables, cart,
-          serviceMode: ui.serviceMode,
-          tableNumber: ui.tableNumber,
           activeStockTab: ui.activeStockTab,
           posActiveCat: ui.posActiveCat,
           ordersFilter: ui.ordersFilter,
@@ -600,8 +596,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
           session: null,
           items: [], categories: [], orders: [], openTables: [],
           cart: [],
-          serviceMode: "dine_in",
-          tableNumber: undefined,
           activeStockTab: "menu",
           posActiveCat: "all",
           ordersFilter: "today",
@@ -626,15 +620,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!state.isLoading)
       saveUI({
-        serviceMode: state.serviceMode,
-        tableNumber: state.tableNumber,
         activeStockTab: state.activeStockTab,
         posActiveCat: state.posActiveCat,
         ordersFilter: state.ordersFilter,
         ordersTab: state.ordersTab,
         ordersTableView: state.ordersTableView,
       });
-  }, [state.serviceMode, state.tableNumber, state.activeStockTab, state.posActiveCat, state.ordersFilter, state.ordersTab, state.ordersTableView, state.isLoading]);
+  }, [state.activeStockTab, state.posActiveCat, state.ordersFilter, state.ordersTab, state.ordersTableView, state.isLoading]);
 
   useEffect(() => {
     if (!state.isLoading) saveSession(state.session);
@@ -653,8 +645,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       dispatch({
         type: "INIT_DONE",
         session: restoredSession, items, categories, orders, openTables, cart,
-        serviceMode: ui.serviceMode,
-        tableNumber: ui.tableNumber,
         activeStockTab: ui.activeStockTab,
         posActiveCat: ui.posActiveCat,
         ordersFilter: ui.ordersFilter,
@@ -695,8 +685,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
         session,
         items: [], categories: [], orders: [], openTables: [],
         cart: [],
-        serviceMode: "dine_in",
-        tableNumber: undefined,
         activeStockTab: "menu",
         posActiveCat: "all",
         ordersFilter: "today",
@@ -707,17 +695,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
+    // Read session BEFORE clearing storage — loadSession() returns null after removal
+    const currentSession = (() => {
+      try {
+        const raw = localStorage.getItem(SESSION_KEY);
+        if (!raw) return null;
+        return JSON.parse(raw) as UserSession;
+      } catch { return null; }
+    })();
     try {
       localStorage.removeItem(SESSION_KEY);
       localStorage.removeItem(CART_KEY);
       localStorage.removeItem(UI_KEY);
     } catch {}
-    // P0-01: clear IDB cart on logout
+    // P0-01: clear IDB cart on logout using the session captured above
     try {
-      const session = loadSession();
-      if (session) {
+      if (currentSession) {
         const { dbClearCart } = await import("@/lib/db");
-        await dbClearCart(session.userId);
+        await dbClearCart(currentSession.userId);
       }
     } catch {}
     try {
@@ -820,8 +815,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const discountPaise = calcDiscount(subtotalPaise, discountType, discountValue);
       const afterDiscount = Math.max(0, subtotalPaise - discountPaise);
       const gstPercent = state.session?.gstPercent ?? 0;
-      const gstPaise = calcGST(afterDiscount, gstPercent);
-      const totalPaise = afterDiscount + gstPaise;
+      // P1-06: mirror CartPanel — inclusive = extract GST from price, exclusive = add on top
+      const gstInclusive = state.session?.stockSettings?.gstInclusive ?? false;
+      const gstPaise = gstInclusive
+        ? Math.round((afterDiscount * gstPercent) / (100 + gstPercent))
+        : calcGST(afterDiscount, gstPercent);
+      const totalPaise = gstInclusive ? afterDiscount : afterDiscount + gstPaise;
       const changePaise = cashReceivedPaise ? Math.max(0, cashReceivedPaise - totalPaise) : 0;
 
       // P0-02: use Supabase atomic counter, fall back to local generateBillNumber
@@ -872,6 +871,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // P0-09: void order
   const voidOrder = useCallback(
     async (id: string, reason = "") => {
+      // Permission foundation: only owner can void orders at data layer
+      if (!canPerform("voidOrder", state.session)) {
+        throw new Error("Permission denied: only owners can void orders");
+      }
       const uid = state.session?.userId ?? "default";
       const voidedAt = new Date().toISOString();
       const db = await import("@/lib/db");
@@ -945,8 +948,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const discountPaise = calcDiscount(subtotalPaise, discountType, discountValue);
       const afterDiscount = Math.max(0, subtotalPaise - discountPaise);
       const gstPercent = state.session?.gstPercent ?? 0;
-      const gstPaise = calcGST(afterDiscount, gstPercent);
-      const totalPaise = afterDiscount + gstPaise;
+      // P1-06: respect gstInclusive for legacy open-table billing path
+      const gstInclusive = state.session?.stockSettings?.gstInclusive ?? false;
+      const gstPaise = gstInclusive
+        ? Math.round((afterDiscount * gstPercent) / (100 + gstPercent))
+        : calcGST(afterDiscount, gstPercent);
+      const totalPaise = gstInclusive ? afterDiscount : afterDiscount + gstPaise;
       const changePaise = cashReceivedPaise ? Math.max(0, cashReceivedPaise - totalPaise) : 0;
 
       let billNumber = generateBillNumber();
@@ -988,6 +995,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const upsertMenuItem = useCallback(
     async (item: MenuItem) => {
+      if (!canPerform("manageMenu", state.session)) {
+        throw new Error("Permission denied: only owners can manage menu items");
+      }
       const uid = state.session?.userId ?? "default";
       const db = await import("@/lib/db");
       const itemWithTs = { ...item, updatedAt: new Date().toISOString() };
@@ -1003,6 +1013,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const deleteMenuItem = useCallback(
     async (id: string) => {
+      if (!canPerform("manageMenu", state.session)) {
+        throw new Error("Permission denied: only owners can manage menu items");
+      }
       const uid = state.session?.userId ?? "default";
       const db = await import("@/lib/db");
       await db.dbDeleteMenuItem(id, uid);
@@ -1016,6 +1029,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const upsertCategory = useCallback(
     async (cat: MenuCategory) => {
+      if (!canPerform("manageMenu", state.session)) {
+        throw new Error("Permission denied: only owners can manage categories");
+      }
       const uid = state.session?.userId ?? "default";
       const db = await import("@/lib/db");
       const catWithTs = { ...cat, updatedAt: new Date().toISOString() };
@@ -1030,6 +1046,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const deleteCategory = useCallback(
     async (id: string) => {
+      if (!canPerform("manageMenu", state.session)) {
+        throw new Error("Permission denied: only owners can manage categories");
+      }
       const uid = state.session?.userId ?? "default";
       const db = await import("@/lib/db");
       await db.dbDeleteCategory(id, uid);
