@@ -9,6 +9,7 @@ import type {
   TableOrder,
   PersistedCart,
 } from "@/lib/types";
+import { recordIdbError } from "@/lib/utils/observability";
 
 type WithUid<T> = T & { _uid: string };
 
@@ -88,7 +89,6 @@ async function migrateIfNeeded(): Promise<void> {
     }
     sth1r.close();
 
-    // Only delete old DB after sth1r confirmed written
     await new Promise<void>((resolve) => {
       const req = indexedDB.deleteDatabase(sourceDbName);
       req.onsuccess = () => resolve();
@@ -98,10 +98,9 @@ async function migrateIfNeeded(): Promise<void> {
 
     setMigrationStatus("ok");
   } catch (err) {
-    // P0-11: Track migration failure — do NOT silently continue
     setMigrationStatus("failed");
     console.error("[Sth1r] DB migration failed:", err);
-    // Non-fatal: app can still work with empty sth1r_db
+    recordIdbError();
   }
 }
 
@@ -114,7 +113,7 @@ class Sth1rDB extends Dexie {
   barItems!:      Table<WithUid<FinishedGood>, string>;
   openTables!:    Table<WithUid<OpenTable>,    string>;
   tableOrders!:   Table<WithUid<TableOrder>,   string>;
-  carts!:         Table<PersistedCart,         string>; // P0-01
+  carts!:         Table<PersistedCart,         string>;
 
   constructor() {
     super("sth1r_db");
@@ -137,7 +136,6 @@ class Sth1rDB extends Dexie {
       openTables:    "id, _uid, tableNumber",
       tableOrders:   "id, _uid, tableId, status, syncStatus",
     });
-    // Version 3: P0-01 cart store + orders status index
     this.version(3).stores({
       orders:        "id, _uid, createdAt, syncStatus, status",
       menuItems:     "id, _uid, categoryId",
@@ -147,6 +145,19 @@ class Sth1rDB extends Dexie {
       barItems:      "id, _uid, name, expiryDate",
       openTables:    "id, _uid, tableNumber",
       tableOrders:   "id, _uid, tableId, status, syncStatus",
+      carts:         "id",
+    });
+    // Version 4: audit_events lightweight store for Phase 7
+    // (audit_log DB is separate, but we add updatedAt index on tableOrders)
+    this.version(4).stores({
+      orders:        "id, _uid, createdAt, syncStatus, status",
+      menuItems:     "id, _uid, categoryId",
+      categories:    "id, _uid, sortOrder",
+      rawMaterials:  "id, _uid, name",
+      finishedGoods: "id, _uid, name, expiryDate",
+      barItems:      "id, _uid, name, expiryDate",
+      openTables:    "id, _uid, tableNumber",
+      tableOrders:   "id, _uid, tableId, status, syncStatus, updatedAt",
       carts:         "id",
     });
   }
@@ -160,16 +171,26 @@ function getDB(): Promise<Sth1rDB> {
   _ready = migrateIfNeeded().then(() => {
     if (!_db) _db = new Sth1rDB();
     return _db;
+  }).catch((err) => {
+    recordIdbError();
+    // Reset so next call retries
+    _ready = null;
+    throw err;
   });
   return _ready;
 }
 
-// ── P0-01: Cart persistence to IndexedDB ──────────────────────────────────────
+// ── P0-01: Cart persistence ───────────────────────────────────────────────────
 const CART_IDB_KEY = "active_cart";
 
 export async function dbSaveCart(items: import("@/lib/types").CartItem[], uid: string): Promise<void> {
-  const db = await getDB();
-  await db.carts.put({ id: CART_IDB_KEY, _uid: uid, items, updatedAt: new Date().toISOString() });
+  try {
+    const db = await getDB();
+    await db.carts.put({ id: CART_IDB_KEY, _uid: uid, items, updatedAt: new Date().toISOString() });
+  } catch (err) {
+    recordIdbError();
+    throw err;
+  }
 }
 
 export async function dbLoadCart(uid: string): Promise<import("@/lib/types").CartItem[]> {
@@ -179,208 +200,418 @@ export async function dbLoadCart(uid: string): Promise<import("@/lib/types").Car
     if (!rec || rec._uid !== uid) return [];
     return rec.items ?? [];
   } catch {
+    recordIdbError();
     return [];
   }
 }
 
 export async function dbClearCart(uid: string): Promise<void> {
-  const db = await getDB();
-  const rec = await db.carts.get(CART_IDB_KEY);
-  if (rec && rec._uid === uid) await db.carts.delete(CART_IDB_KEY);
+  try {
+    const db = await getDB();
+    const rec = await db.carts.get(CART_IDB_KEY);
+    if (rec && rec._uid === uid) await db.carts.delete(CART_IDB_KEY);
+  } catch {
+    recordIdbError();
+  }
 }
 
 // ── Orders ────────────────────────────────────────────────────────────────────
 export async function dbSaveOrder(order: Order, uid: string): Promise<void> {
-  const db = await getDB();
-  await db.orders.put({ ...order, _uid: uid });
+  try {
+    // INVARIANT: totalPaise must be non-negative
+    if (order.totalPaise < 0) throw new Error(`Invariant violation: negative totalPaise on order ${order.id}`);
+    const db = await getDB();
+    await db.orders.put({ ...order, _uid: uid });
+  } catch (err) {
+    recordIdbError();
+    throw err;
+  }
 }
+
 export async function dbGetAllOrders(uid: string): Promise<Order[]> {
-  const db = await getDB();
-  const rows = await db.orders
-    .where("_uid")
-    .equals(uid)
-    .reverse()
-    .sortBy("createdAt");
-  return rows as unknown as Order[];
+  try {
+    const db = await getDB();
+    const rows = await db.orders
+      .where("_uid")
+      .equals(uid)
+      .reverse()
+      .sortBy("createdAt");
+    return rows as unknown as Order[];
+  } catch {
+    recordIdbError();
+    return [];
+  }
 }
+
 export async function dbGetTodaysOrders(uid: string): Promise<Order[]> {
-  const db = await getDB();
-  const today = new Date().toISOString().slice(0, 10);
-  const all = await db.orders.where("_uid").equals(uid).toArray();
-  return all.filter((o) => o.createdAt.startsWith(today)) as unknown as Order[];
+  try {
+    const db = await getDB();
+    const today = new Date().toISOString().slice(0, 10);
+    const all = await db.orders.where("_uid").equals(uid).toArray();
+    return all.filter((o) => o.createdAt.startsWith(today)) as unknown as Order[];
+  } catch {
+    recordIdbError();
+    return [];
+  }
 }
+
 export async function dbGetPendingOrders(uid: string): Promise<Order[]> {
-  const db = await getDB();
-  const all = await db.orders.where("_uid").equals(uid).toArray();
-  return all.filter(
-    (o) => o.syncStatus === "pending" || o.syncStatus === "failed"
-  ) as unknown as Order[];
+  try {
+    const db = await getDB();
+    const all = await db.orders.where("_uid").equals(uid).toArray();
+    return all.filter(
+      (o) => o.syncStatus === "pending" || o.syncStatus === "failed"
+    ) as unknown as Order[];
+  } catch {
+    recordIdbError();
+    return [];
+  }
 }
+
 export async function dbUpdateSyncStatus(
   id: string,
   status: Order["syncStatus"]
 ): Promise<void> {
-  const db = await getDB();
-  await db.orders.update(id, { syncStatus: status });
+  try {
+    const db = await getDB();
+    await db.orders.update(id, { syncStatus: status });
+  } catch {
+    recordIdbError();
+  }
 }
-// P0-09: void/refund
+
 export async function dbVoidOrder(id: string, uid: string, reason?: string): Promise<void> {
-  const db = await getDB();
-  const rec = await db.orders.get(id);
-  if (rec && rec._uid === uid) {
+  try {
+    const db = await getDB();
+    const rec = await db.orders.get(id);
+    if (!rec || rec._uid !== uid) return;
+    // INVARIANT: Cannot void an already-voided order
+    if (rec.status === "voided") return;
     await db.orders.update(id, {
       status: "voided",
       voidedAt: new Date().toISOString(),
       voidReason: reason ?? "",
       syncStatus: "pending",
     });
+  } catch (err) {
+    recordIdbError();
+    throw err;
   }
 }
 
 // ── Menu Items ────────────────────────────────────────────────────────────────
 export async function dbSaveMenuItem(item: MenuItem, uid: string): Promise<void> {
-  const db = await getDB();
-  await db.menuItems.put({ ...item, _uid: uid });
+  try {
+    const db = await getDB();
+    await db.menuItems.put({ ...item, _uid: uid });
+  } catch (err) {
+    recordIdbError();
+    throw err;
+  }
 }
+
 export async function dbDeleteMenuItem(id: string, uid: string): Promise<void> {
-  const db = await getDB();
-  const rec = await db.menuItems.get(id);
-  if (rec && rec._uid === uid) await db.menuItems.delete(id);
+  try {
+    const db = await getDB();
+    const rec = await db.menuItems.get(id);
+    if (rec && rec._uid === uid) await db.menuItems.delete(id);
+  } catch (err) {
+    recordIdbError();
+    throw err;
+  }
 }
+
 export async function dbGetAllMenuItems(uid: string): Promise<MenuItem[]> {
-  const db = await getDB();
-  return db.menuItems
-    .where("_uid")
-    .equals(uid)
-    .toArray() as unknown as MenuItem[];
+  try {
+    const db = await getDB();
+    return db.menuItems
+      .where("_uid")
+      .equals(uid)
+      .toArray() as unknown as MenuItem[];
+  } catch {
+    recordIdbError();
+    return [];
+  }
 }
-export async function dbBulkSaveMenuItems(
-  items: MenuItem[],
-  uid: string
-): Promise<void> {
-  const db = await getDB();
-  await db.menuItems.bulkPut(items.map((i) => ({ ...i, _uid: uid })));
+
+export async function dbBulkSaveMenuItems(items: MenuItem[], uid: string): Promise<void> {
+  try {
+    const db = await getDB();
+    await db.menuItems.bulkPut(items.map((i) => ({ ...i, _uid: uid })));
+  } catch (err) {
+    recordIdbError();
+    throw err;
+  }
 }
 
 // ── Categories ────────────────────────────────────────────────────────────────
 export async function dbSaveCategory(cat: MenuCategory, uid: string): Promise<void> {
-  const db = await getDB();
-  await db.categories.put({ ...cat, _uid: uid });
+  try {
+    const db = await getDB();
+    await db.categories.put({ ...cat, _uid: uid });
+  } catch (err) {
+    recordIdbError();
+    throw err;
+  }
 }
+
 export async function dbDeleteCategory(id: string, uid: string): Promise<void> {
-  const db = await getDB();
-  const rec = await db.categories.get(id);
-  if (rec && rec._uid === uid) await db.categories.delete(id);
+  try {
+    const db = await getDB();
+    const rec = await db.categories.get(id);
+    if (rec && rec._uid === uid) await db.categories.delete(id);
+  } catch (err) {
+    recordIdbError();
+    throw err;
+  }
 }
+
 export async function dbGetAllCategories(uid: string): Promise<MenuCategory[]> {
-  const db = await getDB();
-  const cats = await db.categories.where("_uid").equals(uid).toArray();
-  return cats.sort((a, b) => a.sortOrder - b.sortOrder) as unknown as MenuCategory[];
+  try {
+    const db = await getDB();
+    const cats = await db.categories.where("_uid").equals(uid).toArray();
+    return cats.sort((a, b) => a.sortOrder - b.sortOrder) as unknown as MenuCategory[];
+  } catch {
+    recordIdbError();
+    return [];
+  }
 }
+
 export async function dbBulkSaveCategories(cats: MenuCategory[], uid: string): Promise<void> {
-  const db = await getDB();
-  await db.categories.bulkPut(cats.map((c) => ({ ...c, _uid: uid })));
+  try {
+    const db = await getDB();
+    await db.categories.bulkPut(cats.map((c) => ({ ...c, _uid: uid })));
+  } catch (err) {
+    recordIdbError();
+    throw err;
+  }
 }
 
 // ── Raw Materials ─────────────────────────────────────────────────────────────
 export async function dbSaveRawMaterial(item: RawMaterial, uid: string): Promise<void> {
-  const db = await getDB();
-  await db.rawMaterials.put({ ...item, _uid: uid });
+  try {
+    const db = await getDB();
+    await db.rawMaterials.put({ ...item, _uid: uid });
+  } catch (err) {
+    recordIdbError();
+    throw err;
+  }
 }
+
 export async function dbDeleteRawMaterial(id: string, uid: string): Promise<void> {
-  const db = await getDB();
-  const rec = await db.rawMaterials.get(id);
-  if (rec && rec._uid === uid) await db.rawMaterials.delete(id);
+  try {
+    const db = await getDB();
+    const rec = await db.rawMaterials.get(id);
+    if (rec && rec._uid === uid) await db.rawMaterials.delete(id);
+  } catch (err) {
+    recordIdbError();
+    throw err;
+  }
 }
+
 export async function dbGetAllRawMaterials(uid: string): Promise<RawMaterial[]> {
-  const db = await getDB();
-  return db.rawMaterials.where("_uid").equals(uid).toArray() as unknown as RawMaterial[];
+  try {
+    const db = await getDB();
+    return db.rawMaterials.where("_uid").equals(uid).toArray() as unknown as RawMaterial[];
+  } catch {
+    recordIdbError();
+    return [];
+  }
 }
 
 // ── Finished Goods ────────────────────────────────────────────────────────────
 export async function dbSaveFinishedGood(item: FinishedGood, uid: string): Promise<void> {
-  const db = await getDB();
-  await db.finishedGoods.put({ ...item, _uid: uid });
+  try {
+    const db = await getDB();
+    await db.finishedGoods.put({ ...item, _uid: uid });
+  } catch (err) {
+    recordIdbError();
+    throw err;
+  }
 }
+
 export async function dbDeleteFinishedGood(id: string, uid: string): Promise<void> {
-  const db = await getDB();
-  const rec = await db.finishedGoods.get(id);
-  if (rec && rec._uid === uid) await db.finishedGoods.delete(id);
+  try {
+    const db = await getDB();
+    const rec = await db.finishedGoods.get(id);
+    if (rec && rec._uid === uid) await db.finishedGoods.delete(id);
+  } catch (err) {
+    recordIdbError();
+    throw err;
+  }
 }
+
 export async function dbGetAllFinishedGoods(uid: string): Promise<FinishedGood[]> {
-  const db = await getDB();
-  return db.finishedGoods.where("_uid").equals(uid).toArray() as unknown as FinishedGood[];
+  try {
+    const db = await getDB();
+    return db.finishedGoods.where("_uid").equals(uid).toArray() as unknown as FinishedGood[];
+  } catch {
+    recordIdbError();
+    return [];
+  }
 }
 
 // ── Bar Items ─────────────────────────────────────────────────────────────────
 export async function dbSaveBarItem(item: FinishedGood, uid: string): Promise<void> {
-  const db = await getDB();
-  await db.barItems.put({ ...item, _uid: uid });
+  try {
+    const db = await getDB();
+    await db.barItems.put({ ...item, _uid: uid });
+  } catch (err) {
+    recordIdbError();
+    throw err;
+  }
 }
+
 export async function dbDeleteBarItem(id: string, uid: string): Promise<void> {
-  const db = await getDB();
-  const rec = await db.barItems.get(id);
-  if (rec && rec._uid === uid) await db.barItems.delete(id);
+  try {
+    const db = await getDB();
+    const rec = await db.barItems.get(id);
+    if (rec && rec._uid === uid) await db.barItems.delete(id);
+  } catch (err) {
+    recordIdbError();
+    throw err;
+  }
 }
+
 export async function dbGetAllBarItems(uid: string): Promise<FinishedGood[]> {
-  const db = await getDB();
-  return db.barItems.where("_uid").equals(uid).toArray() as unknown as FinishedGood[];
+  try {
+    const db = await getDB();
+    return db.barItems.where("_uid").equals(uid).toArray() as unknown as FinishedGood[];
+  } catch {
+    recordIdbError();
+    return [];
+  }
 }
 
 // ── Legacy Open Tables ────────────────────────────────────────────────────────
 export async function dbSaveOpenTable(tab: OpenTable, uid: string): Promise<void> {
-  const db = await getDB();
-  await db.openTables.put({ ...tab, _uid: uid });
-}
-export async function dbGetAllOpenTables(uid: string): Promise<OpenTable[]> {
-  const db = await getDB();
-  return db.openTables.where("_uid").equals(uid).toArray() as unknown as OpenTable[];
-}
-export async function dbDeleteOpenTable(id: string, uid: string): Promise<void> {
-  const db = await getDB();
-  const rec = await db.openTables.get(id);
-  if (rec && rec._uid === uid) await db.openTables.delete(id);
+  try {
+    const db = await getDB();
+    await db.openTables.put({ ...tab, _uid: uid });
+  } catch (err) {
+    recordIdbError();
+    throw err;
+  }
 }
 
-// ── TableOrders (new module) ──────────────────────────────────────────────────
+export async function dbGetAllOpenTables(uid: string): Promise<OpenTable[]> {
+  try {
+    const db = await getDB();
+    return db.openTables.where("_uid").equals(uid).toArray() as unknown as OpenTable[];
+  } catch {
+    recordIdbError();
+    return [];
+  }
+}
+
+export async function dbDeleteOpenTable(id: string, uid: string): Promise<void> {
+  try {
+    const db = await getDB();
+    const rec = await db.openTables.get(id);
+    if (rec && rec._uid === uid) await db.openTables.delete(id);
+  } catch (err) {
+    recordIdbError();
+    throw err;
+  }
+}
+
+// ── TableOrders ───────────────────────────────────────────────────────────────
 export async function dbSaveTableOrder(order: TableOrder, uid: string): Promise<void> {
-  const db = await getDB();
-  await db.tableOrders.put({ ...order, _uid: uid });
+  try {
+    // INVARIANT: totalPaise must be non-negative
+    if (order.totalPaise < 0) throw new Error(`Invariant violation: negative totalPaise on table order ${order.id}`);
+    const db = await getDB();
+    await db.tableOrders.put({ ...order, _uid: uid });
+  } catch (err) {
+    recordIdbError();
+    throw err;
+  }
 }
 
 export async function dbGetTableOrder(id: string, uid: string): Promise<TableOrder | null> {
-  const db = await getDB();
-  const rec = await db.tableOrders.get(id);
-  if (!rec || rec._uid !== uid) return null;
-  return rec as unknown as TableOrder;
+  try {
+    const db = await getDB();
+    const rec = await db.tableOrders.get(id);
+    if (!rec || rec._uid !== uid) return null;
+    return rec as unknown as TableOrder;
+  } catch {
+    recordIdbError();
+    return null;
+  }
 }
 
 export async function dbGetAllTableOrders(uid: string): Promise<TableOrder[]> {
-  const db = await getDB();
-  return db.tableOrders
-    .where("_uid")
-    .equals(uid)
-    .toArray() as unknown as TableOrder[];
+  try {
+    const db = await getDB();
+    return db.tableOrders
+      .where("_uid")
+      .equals(uid)
+      .toArray() as unknown as TableOrder[];
+  } catch {
+    recordIdbError();
+    return [];
+  }
 }
 
 export async function dbDeleteTableOrder(id: string, uid: string): Promise<void> {
-  const db = await getDB();
-  const rec = await db.tableOrders.get(id);
-  if (rec && rec._uid === uid) await db.tableOrders.delete(id);
+  try {
+    const db = await getDB();
+    const rec = await db.tableOrders.get(id);
+    if (rec && rec._uid === uid) await db.tableOrders.delete(id);
+  } catch (err) {
+    recordIdbError();
+    throw err;
+  }
 }
 
 export async function dbGetPendingTableOrders(uid: string): Promise<TableOrder[]> {
-  const db = await getDB();
-  const all = await db.tableOrders.where("_uid").equals(uid).toArray();
-  return all.filter(
-    (o) => o.syncStatus === "pending" || o.syncStatus === "failed"
-  ) as unknown as TableOrder[];
+  try {
+    const db = await getDB();
+    const all = await db.tableOrders.where("_uid").equals(uid).toArray();
+    return all.filter(
+      (o) => o.syncStatus === "pending" || o.syncStatus === "failed"
+    ) as unknown as TableOrder[];
+  } catch {
+    recordIdbError();
+    return [];
+  }
 }
 
 export async function dbUpdateTableOrderSyncStatus(
   id: string,
   status: TableOrder["syncStatus"]
 ): Promise<void> {
-  const db = await getDB();
-  await db.tableOrders.update(id, { syncStatus: status });
+  try {
+    const db = await getDB();
+    await db.tableOrders.update(id, { syncStatus: status });
+  } catch {
+    recordIdbError();
+  }
+}
+
+/**
+ * Atomic read-modify-write for TableOrder.
+ * FIX C-03/H-03: Prevents lost-update race between concurrent addItem calls.
+ * All mutations to a TableOrder must go through this function.
+ */
+export async function dbAtomicUpdateTableOrder(
+  id: string,
+  uid: string,
+  updater: (current: TableOrder | null) => TableOrder | null
+): Promise<TableOrder | null> {
+  try {
+    const db = await getDB();
+    return await db.transaction("rw", db.tableOrders, async () => {
+      const rec = await db.tableOrders.get(id);
+      const current = (rec && rec._uid === uid) ? rec as unknown as TableOrder : null;
+      const next = updater(current);
+      if (next === null) return null;
+      if (next.totalPaise < 0) throw new Error("Invariant: negative totalPaise");
+      await db.tableOrders.put({ ...next, _uid: uid });
+      return next;
+    });
+  } catch (err) {
+    recordIdbError();
+    throw err;
+  }
 }
