@@ -188,7 +188,7 @@ export async function signUp(
               Date.now() + 14 * 24 * 60 * 60 * 1000
             ).toISOString(),
           })
-          .catch(() => {});
+          .then(() => {}, () => {});
         return { ok: true, businessId: biz.id };
       }
     }
