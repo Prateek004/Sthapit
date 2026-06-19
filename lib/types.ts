@@ -7,6 +7,50 @@ export type PaymentMethod = "cash" | "upi" | "split";
 export type TableStatus = "AVAILABLE" | "OCCUPIED";
 export type OrderStatus = "completed" | "voided" | "refunded";
 
+// ── SaaS: Plan + Subscription types ────────────────────────────
+export type Plan = "free" | "starter" | "pro";
+export type SubscriptionStatus = "trialing" | "active" | "past_due" | "canceled" | "expired";
+
+export interface Business {
+  id: string;
+  name: string;
+  ownerName?: string;
+  businessType: BusinessType;
+  phone?: string;
+  city?: string;
+  gstPercent: number;
+  currencySymbol: string;
+  upiId?: string;
+  stockSettings?: StockSettings;
+  ownerUserId?: string;
+  createdAt: string;
+}
+
+export interface Subscription {
+  id: string;
+  businessId: string;
+  plan: Plan;
+  status: SubscriptionStatus;
+  trialEndsAt?: string | null;
+  currentPeriodEnd?: string | null;
+  razorpayCustomerId?: string | null;
+  razorpaySubscriptionId?: string | null;
+  razorpayPlanId?: string | null;
+  cancelAtPeriodEnd: boolean;
+}
+
+export interface PlanLimits {
+  maxMenuItems: number;
+  maxStaff: number;
+  maxTables: number;
+}
+
+export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
+  free:    { maxMenuItems: 30,     maxStaff: 1,      maxTables: 4 },
+  starter: { maxMenuItems: 150,    maxStaff: 5,      maxTables: 20 },
+  pro:     { maxMenuItems: 100000, maxStaff: 100000, maxTables: 100000 },
+};
+
 export interface StockSettings {
   tablesEnabled: boolean;
   kotEnabled: boolean;
@@ -17,8 +61,10 @@ export interface StockSettings {
   gstInclusive?: boolean; // P1-06: true = prices include GST (MRP-inclusive), false = GST added on top
 }
 
+// ── UserSession: businessId added — ALL data partitioning uses this, not userId ──
 export interface UserSession {
-  userId: string;
+  userId: string;        // identity of the logged-in person (owner OR cashier)
+  businessId: string;    // the tenant — ALL data partitioning uses this, not userId
   username: string;
   role: UserRole;
   businessName: string;
@@ -27,6 +73,12 @@ export interface UserSession {
   upiId?: string;
   stockSettings?: StockSettings;
   loggedInAt?: string; // P1-02: for inactivity lock
+  subscription?: {
+    plan: Plan;
+    status: SubscriptionStatus;
+    trialEndsAt?: string | null;
+    isEntitled: boolean;
+  };
 }
 
 export interface BusinessProfile {
