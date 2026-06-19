@@ -590,10 +590,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const placeOrderInFlight = useRef(false);
   const closeTableInFlight = useRef<Set<string>>(new Set());
-  const debouncedCartSave = useRef
-    ((cart: CartItem[], uid: string) => void) | null
-  >(null);
-
+  const debouncedCartSave = useRef<((cart: CartItem[], uid: string) => void) | null>(null);
   const resetInactivityTimer = useCallback(() => {
     if (!state.session) return;
     if (inactivityTimer.current) clearTimeout(inactivityTimer.current);
