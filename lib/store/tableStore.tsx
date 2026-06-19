@@ -164,7 +164,7 @@ export function TableStoreProvider({
   session: UserSession | null;
 }) {
   const [state, dispatch] = useReducer(reducer, { orders: {}, isLoading: true });
-  const uid = session?.userId ?? "default";
+  const uid = session?.businessId ?? "default";
   const currentGstPercent = session?.gstPercent ?? 0;
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -182,14 +182,14 @@ export function TableStoreProvider({
         dispatch({ type: "INIT", orders });
       })
     );
-  }, [session?.userId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [session?.businessId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Realtime subscription
   useEffect(() => {
-    if (!session?.userId) return;
+    if (!session?.businessId) return;
     import("@/lib/supabase/tableSync").then(({ subscribeToTableOrders }) => {
       const unsub = subscribeToTableOrders(
-        session.userId,
+        session.businessId,
         (order) => {
           const local = stateRef.current.orders[order.id];
           if (!local || order.version > local.version) {
@@ -200,7 +200,7 @@ export function TableStoreProvider({
       );
       return unsub;
     }).catch(() => {});
-  }, [session?.userId]);
+  }, [session?.businessId]);
 
   // ── Internal: atomic persist ─────────────────────────────────────────────
   // FIX H-03: All writes go through dbAtomicUpdateTableOrder (IDB transaction).
@@ -220,7 +220,7 @@ export function TableStoreProvider({
           dispatch({ type: "UPSERT", order: result });
           // Fire-and-forget Supabase sync
           import("@/lib/supabase/tableSync")
-            .then(({ syncTableOrder }) => syncTableOrder(result))
+            .then(({ syncTableOrder }) => syncTableOrder(result, uidRef.current))
             .catch(() => {});
         }
         return result;
@@ -512,7 +512,7 @@ export function TableStoreProvider({
 
       // Sync deletion to Supabase (fire-and-forget but tracked)
       import("@/lib/supabase/tableSync")
-        .then(({ syncTableOrder }) => syncTableOrder(cleared))
+        .then(({ syncTableOrder }) => syncTableOrder(cleared, uidRef.current))
         .catch(() => {});
 
       logAudit("TABLE_CLOSED", uidRef.current, {
