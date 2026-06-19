@@ -787,11 +787,11 @@ function CheckoutSheet({
     placingRef.current = true; // P0-06: block concurrent taps
     setPlacing(true);
     try {
-      const uid = appState.session?.userId ?? "default";
+      const businessId = appState.session?.businessId ?? "default";
 
       // P1-05: re-read from IDB at close time — never trust stale React state for billing
       const { dbGetTableOrder } = await import("@/lib/db");
-      const freshOrder = await dbGetTableOrder(order.id, uid);
+      const freshOrder = await dbGetTableOrder(order.id, businessId);
       const billing = freshOrder ?? order;
       const freshItems = billing.items;
       const freshSubtotal = billing.subtotalPaise;
@@ -804,7 +804,7 @@ function CheckoutSheet({
       let billNumber = generateBillNumber();
       try {
         const { getNextBillCounterFromSupabase } = await import("@/lib/supabase/sync");
-        const remote = await getNextBillCounterFromSupabase();
+        const remote = await getNextBillCounterFromSupabase(businessId);
         if (remote !== null) billNumber = `#${String(remote).padStart(4, "0")}`;
       } catch {}
 
@@ -847,13 +847,13 @@ function CheckoutSheet({
       };
 
       const { dbSaveOrder } = await import("@/lib/db");
-      await dbSaveOrder(finalOrder, uid);
+      await dbSaveOrder(finalOrder, businessId);
 
       notifyOrderPlaced(finalOrder);
       await clearOrder(tableId);
 
       import("@/lib/supabase/sync")
-        .then(({ syncOrder }) => syncOrder(finalOrder))
+        .then(({ syncOrder }) => syncOrder(finalOrder, businessId))
         .catch(() => {});
 
       setPlacedOrder(finalOrder);
