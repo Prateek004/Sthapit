@@ -143,7 +143,7 @@ export default function AuthPage() {
 
     try {
       if (mode === "signup") {
-        const result = await signUp({ username, password, role, businessName, ownerName, businessType: bizType });
+const result = await signUp({ username, password, businessName, ownerName, businessType: bizType });
         if (!result.ok) { applyError(result.error ?? "Signup failed"); setLoading(false); return; }
 
         // Always sign in right after signup — auth.ts saves locally so this works
