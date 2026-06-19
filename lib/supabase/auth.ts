@@ -10,7 +10,6 @@ export interface AuthResult {
 export interface SignUpData {
   username: string;
   password: string;
-  role: UserRole;
   businessName: string;
   ownerName: string;
   businessType: string;
@@ -20,10 +19,8 @@ const LOCAL_USERS_KEY = "sth1r_local_users";
 const LEGACY_LOCAL_USERS_KEY = "vynn_local_users";
 
 interface LocalUser {
-  // FIX #9: uid is now a true UUID, not "local_<username>".
-  // This prevents two businesses with the same username from sharing
-  // the same IndexedDB partition.
   uid: string;
+  businessId: string;
   username: string;
   passwordHash: string;
   salt?: string;
@@ -67,7 +64,11 @@ function getLocalUsers(): LocalUser[] {
       localStorage.setItem(LOCAL_USERS_KEY, legacy);
       localStorage.removeItem(LEGACY_LOCAL_USERS_KEY);
     }
-    return JSON.parse(localStorage.getItem(LOCAL_USERS_KEY) ?? "[]");
+    const raw = JSON.parse(
+      localStorage.getItem(LOCAL_USERS_KEY) ?? "[]"
+    ) as Partial<LocalUser>[];
+    // Backward compat: old records had no businessId — default it to their own uid
+    return raw.map((u) => ({ ...u, businessId: u.businessId ?? u.uid } as LocalUser));
   } catch {
     return [];
   }
@@ -89,52 +90,51 @@ function isRateLimitError(msg: string): boolean {
   );
 }
 
-async function localSignUp(data: SignUpData): Promise<AuthResult> {
+// ── Owner sign-up. Cashiers are created by the owner via createStaffAccount. ──
+async function localSignUp(
+  data: SignUpData
+): Promise<{ ok: boolean; error?: string; businessId?: string }> {
   const users = getLocalUsers();
   const username = data.username.toLowerCase().trim();
   if (users.some((u) => u.username === username)) {
-    return { ok: true };
+    return { ok: false, error: "Username already taken" };
   }
   const salt = generateSalt();
   const passwordHash = await hashPassword(data.password, salt);
-  // FIX #9: Generate a real UUID as the partition key — not "local_<username>"
   const uid = crypto.randomUUID();
+  const businessId = crypto.randomUUID();
   users.push({
     uid,
+    businessId,
     username,
     passwordHash,
     salt,
-    role: data.role,
+    role: "owner",
     businessName: data.businessName.trim(),
     ownerName: data.ownerName.trim(),
     businessType: data.businessType,
     gstPercent: 5,
   });
   saveLocalUsers(users);
-  return { ok: true };
+  return { ok: true, businessId };
 }
 
-export async function signUp(data: SignUpData): Promise<AuthResult> {
+export async function signUp(
+  data: SignUpData
+): Promise<AuthResult & { businessId?: string }> {
   const username = data.username.toLowerCase().trim();
-
   const sb = getSupabase();
 
-  // No Supabase — pure local
   if (!sb) {
-    const users = getLocalUsers();
-    if (users.some((u) => u.username === username)) {
-      return { ok: false, error: "Username already taken" };
-    }
     return localSignUp(data);
   }
 
-  // Save locally first — always succeeds, always allows login
   const localResult = await localSignUp(data);
   if (!localResult.ok) return localResult;
 
   const email = `${username}@sth1r.app`;
   try {
-    const { error } = await sb.auth.signUp({
+    const { data: signUpData, error } = await sb.auth.signUp({
       email,
       password: data.password,
       options: {
@@ -143,29 +143,117 @@ export async function signUp(data: SignUpData): Promise<AuthResult> {
           business_name: data.businessName.trim(),
           owner_name: data.ownerName.trim(),
           business_type: data.businessType,
-          role: data.role,
+          role: "owner",
         },
       },
     });
+
     if (error && !isRateLimitError(error.message)) {
       console.warn("[Sth1r] Supabase signUp non-fatal:", error.message);
+      return localResult;
+    }
+
+    const newUserId = signUpData?.user?.id;
+    if (newUserId) {
+      const { data: biz, error: bizErr } = await sb
+        .from("businesses")
+        .insert({
+          name: data.businessName.trim(),
+          owner_name: data.ownerName.trim(),
+          business_type: data.businessType,
+          gst_percent: 5,
+          owner_user_id: newUserId,
+        })
+        .select("id")
+        .single();
+
+      if (!bizErr && biz) {
+        await sb.from("profiles").upsert({
+          id: newUserId,
+          username,
+          role: "owner",
+          business_id: biz.id,
+          business_name: data.businessName.trim(),
+          owner_name: data.ownerName.trim(),
+          business_type: data.businessType,
+          gst_percent: 5,
+        });
+        await sb
+          .from("subscriptions")
+          .insert({
+            business_id: biz.id,
+            plan: "free",
+            status: "trialing",
+            trial_ends_at: new Date(
+              Date.now() + 14 * 24 * 60 * 60 * 1000
+            ).toISOString(),
+          })
+          .catch(() => {});
+        return { ok: true, businessId: biz.id };
+      }
     }
   } catch {
     // Network down — local save already done above
   }
 
-  return { ok: true };
+  return localResult;
 }
 
 type SignInResult = AuthResult & {
   userId?: string;
+  businessId?: string;
   role?: UserRole;
   businessName?: string;
   businessType?: string;
   gstPercent?: number;
   upiId?: string;
   ownerName?: string;
+  subscription?: {
+    plan: "free" | "starter" | "pro";
+    status: "trialing" | "active" | "past_due" | "canceled" | "expired";
+    trialEndsAt?: string | null;
+    isEntitled: boolean;
+  };
 };
+
+async function localSignIn(
+  username: string,
+  password: string
+): Promise<SignInResult> {
+  const users = getLocalUsers();
+  const user = users.find((u) => u.username === username);
+  if (!user) return { ok: false, error: "Username not found" };
+
+  let match = false;
+  if (user.salt) {
+    match = (await hashPassword(password, user.salt)) === user.passwordHash;
+  } else {
+    if (legacyHash(password) === user.passwordHash) {
+      match = true;
+      const salt = generateSalt();
+      user.salt = salt;
+      user.passwordHash = await hashPassword(password, salt);
+      saveLocalUsers(users);
+    }
+  }
+
+  if (!match) return { ok: false, error: "Incorrect password" };
+
+  const userId = user.uid ?? `local_${user.username}`;
+  const businessId = user.businessId ?? userId;
+
+  return {
+    ok: true,
+    userId,
+    businessId,
+    role: user.role,
+    businessName: user.businessName,
+    businessType: user.businessType,
+    gstPercent: user.gstPercent ?? 5,
+    upiId: user.upiId,
+    ownerName: user.ownerName,
+  };
+}
 
 export async function signIn(
   username: string,
@@ -173,7 +261,6 @@ export async function signIn(
 ): Promise<SignInResult> {
   const sb = getSupabase();
   const normalizedUsername = username.toLowerCase().trim();
-
   const localResult = await localSignIn(normalizedUsername, password);
 
   if (!sb) return localResult;
@@ -202,70 +289,59 @@ export async function signIn(
 
     const { data: profile } = await sb
       .from("profiles")
-      .select("role, business_name, business_type, gst_percent, upi_id, owner_name")
+      .select(
+        "role, business_id, business_name, business_type, gst_percent, upi_id, owner_name"
+      )
       .eq("id", user.id)
       .single();
 
-    if (!profile) {
+    if (!profile || !profile.business_id) {
       return localResult.ok
         ? localResult
-        : { ok: false, error: "Profile not found" };
+        : {
+            ok: false,
+            error:
+              "Profile not set up — contact your business owner",
+          };
     }
+
+    const { data: sub } = await sb
+      .from("subscriptions")
+      .select("plan, status, trial_ends_at")
+      .eq("business_id", profile.business_id)
+      .single();
+
+    const isEntitled = sub
+      ? sub.status === "active" ||
+        (sub.status === "trialing" &&
+          sub.trial_ends_at &&
+          new Date(sub.trial_ends_at) > new Date())
+      : true; // no row yet — don't lock owner out on first login
 
     return {
       ok: true,
       userId: user.id,
+      businessId: profile.business_id,
       role: profile.role as UserRole,
       businessName: profile.business_name,
       businessType: profile.business_type,
       gstPercent: profile.gst_percent ?? 5,
       upiId: profile.upi_id,
       ownerName: profile.owner_name,
+      subscription: sub
+        ? {
+            plan: sub.plan,
+            status: sub.status,
+            trialEndsAt: sub.trial_ends_at,
+            isEntitled,
+          }
+        : undefined,
     };
   } catch {
     return localResult.ok
       ? localResult
       : { ok: false, error: "Network error — please check connection" };
   }
-}
-
-async function localSignIn(
-  username: string,
-  password: string
-): Promise<SignInResult> {
-  const users = getLocalUsers();
-  const user = users.find((u) => u.username === username);
-  if (!user) return { ok: false, error: "Username not found" };
-
-  let match = false;
-  if (user.salt) {
-    match = (await hashPassword(password, user.salt)) === user.passwordHash;
-  } else {
-    if (legacyHash(password) === user.passwordHash) {
-      match = true;
-      const salt = generateSalt();
-      user.salt = salt;
-      user.passwordHash = await hashPassword(password, salt);
-      saveLocalUsers(users);
-    }
-  }
-
-  if (!match) return { ok: false, error: "Incorrect password" };
-
-  // FIX #9: Use the stored UUID as userId, fall back to legacy "local_<username>"
-  // for accounts created before this fix (so existing users aren't locked out).
-  const userId = user.uid ?? `local_${user.username}`;
-
-  return {
-    ok: true,
-    userId,
-    role: user.role,
-    businessName: user.businessName,
-    businessType: user.businessType,
-    gstPercent: user.gstPercent ?? 5,
-    upiId: user.upiId,
-    ownerName: user.ownerName,
-  };
 }
 
 export async function signOut(): Promise<void> {
@@ -297,19 +373,83 @@ export async function getCurrentUserId(): Promise<string | null> {
   }
 }
 
-// ── FIX #3: Password recovery (Supabase path) ────────────────────────────────
-// Call this from a "Forgot password?" link on the sign-in screen.
-// Sends a recovery email via Supabase. The user lands on /reset-password
-// with an access_token in the URL hash; handle it there with
-// supabase.auth.updateUser({ password: newPassword }).
-export async function sendPasswordRecovery(username: string): Promise<AuthResult> {
+// ── Owner creates a cashier account under their own business ──
+// Calls the server-side route because creating Supabase Auth users
+// requires the service_role key which must NEVER be in browser code.
+export interface CreateStaffData {
+  username: string;
+  password: string;
+  businessId: string;
+}
+
+export async function createStaffAccount(
+  data: CreateStaffData
+): Promise<AuthResult> {
+  const sb = getSupabase();
+  const username = data.username.toLowerCase().trim();
+
+  if (!sb) {
+    // Local-only mode: add user to localStorage under same businessId
+    const users = getLocalUsers();
+    if (users.some((u) => u.username === username)) {
+      return { ok: false, error: "Username already taken" };
+    }
+    const owner = users.find(
+      (u) => u.businessId === data.businessId && u.role === "owner"
+    );
+    const salt = generateSalt();
+    const passwordHash = await hashPassword(data.password, salt);
+    users.push({
+      uid: crypto.randomUUID(),
+      businessId: data.businessId,
+      username,
+      passwordHash,
+      salt,
+      role: "cashier",
+      businessName: owner?.businessName ?? "",
+      ownerName: owner?.ownerName ?? "",
+      businessType: owner?.businessType ?? "restaurant",
+      gstPercent: owner?.gstPercent ?? 5,
+    });
+    saveLocalUsers(users);
+    return { ok: true };
+  }
+
+  try {
+    const {
+      data: { session },
+    } = await sb.auth.getSession();
+    if (!session) return { ok: false, error: "Not signed in" };
+
+    const res = await fetch("/api/staff/create", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({
+        username,
+        password: data.password,
+      }),
+    });
+    const json = await res.json();
+    if (!res.ok)
+      return { ok: false, error: json.error ?? "Failed to create staff account" };
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "Network error — please check connection" };
+  }
+}
+
+export async function sendPasswordRecovery(
+  username: string
+): Promise<AuthResult> {
   const sb = getSupabase();
   if (!sb) {
     return {
       ok: false,
       error:
-        "Password recovery requires cloud sync to be enabled. " +
-        "Ask your administrator to set up Supabase, or contact support.",
+        "Password recovery requires cloud sync. Ask your administrator to set up Supabase.",
     };
   }
   const email = `${username.toLowerCase().trim()}@sth1r.app`;
