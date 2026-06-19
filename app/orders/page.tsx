@@ -984,7 +984,7 @@ function AddItemsModal({
 // ─── Main Page ────────────────────────────────────────────────────────────────
 export default function OrdersPage() {
   const { state, openTableAddItems, showToast, setOrdersFilter, setOrdersTab, setOrdersTableView, voidOrder } = useApp();
-  const uid = state.session?.userId ?? "default";
+  const uid = state.session?.businessId ?? "default";
 
   const [allOrders, setAllOrders]     = useState<Order[]>([]);
   const filter      = state.ordersFilter;
