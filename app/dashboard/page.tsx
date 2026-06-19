@@ -56,7 +56,7 @@ function dayLabel(dateStr: string) {
 
 export default function DashboardPage() {
   const { state } = useApp();
-  const uid = state.session?.userId ?? "default";
+  const uid = state.session?.businessId ?? "default";
   const [allOrders, setAllOrders] = useState<Order[]>([]);
 
   useEffect(() => {
