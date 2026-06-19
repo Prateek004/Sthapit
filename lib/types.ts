@@ -1,4 +1,4 @@
-// All money: INTEGER PAISE (1 ₹ = 100 paise)
+// All money: INTEGER PAISE (1 ₹ = 100 paise). Never use floats for money.
 
 export type BusinessType = "cafe" | "restaurant" | "food_truck" | "kiosk" | "bakery" | "franchise";
 export type UserRole = "owner" | "cashier";
@@ -7,7 +7,7 @@ export type PaymentMethod = "cash" | "upi" | "split";
 export type TableStatus = "AVAILABLE" | "OCCUPIED";
 export type OrderStatus = "completed" | "voided" | "refunded";
 
-// ── SaaS: Plan + Subscription types ────────────────────────────
+// ── SaaS plan types ───────────────────────────────────────────
 export type Plan = "free" | "starter" | "pro";
 export type SubscriptionStatus = "trialing" | "active" | "past_due" | "canceled" | "expired";
 
@@ -58,13 +58,15 @@ export interface StockSettings {
   tableCount: number;
   openTableBilling?: boolean;
   activeTab?: string;
-  gstInclusive?: boolean; // P1-06: true = prices include GST (MRP-inclusive), false = GST added on top
+  /** true = prices already include GST (MRP-inclusive); false = GST is added on top */
+  gstInclusive?: boolean;
 }
 
-// ── UserSession: businessId added — ALL data partitioning uses this, not userId ──
 export interface UserSession {
-  userId: string;        // identity of the logged-in person (owner OR cashier)
-  businessId: string;    // the tenant — ALL data partitioning uses this, not userId
+  /** Identity of the logged-in person (owner OR cashier). Used for audit attribution. */
+  userId: string;
+  /** The tenant — ALL data partitioning uses this, not userId. */
+  businessId: string;
   username: string;
   role: UserRole;
   businessName: string;
@@ -72,7 +74,8 @@ export interface UserSession {
   gstPercent: number;
   upiId?: string;
   stockSettings?: StockSettings;
-  loggedInAt?: string; // P1-02: for inactivity lock
+  /** ISO string — used for inactivity lock timer */
+  loggedInAt?: string;
   subscription?: {
     plan: Plan;
     status: SubscriptionStatus;
@@ -112,14 +115,14 @@ export interface MenuItem {
   portionEnabled?: boolean;
   portions?: { label: string; pricePaise: number }[];
   fastAdd?: boolean;
-  updatedAt?: string; // for menu sync
+  updatedAt?: string;
 }
 
 export interface MenuCategory {
   id: string;
   name: string;
   sortOrder: number;
-  updatedAt?: string; // for menu sync
+  updatedAt?: string;
 }
 
 export interface RawMaterial {
@@ -150,7 +153,8 @@ export interface CartItem {
   cartId: string;
   menuItemId: string;
   name: string;
-  unitPricePaise: number; // CONTRACT: base menu price ONLY, never includes add-ons
+  /** CONTRACT: base menu price ONLY — never includes add-ons */
+  unitPricePaise: number;
   qty: number;
   tableNumber?: number;
   selectedSize?: string;
@@ -183,13 +187,12 @@ export interface Order {
   changePaise?: number;
   createdAt: string;
   syncStatus: "pending" | "synced" | "failed";
-  // P0-09: void/refund
   status?: OrderStatus;
   voidedAt?: string;
   voidReason?: string;
 }
 
-// Legacy — kept for backward compat with existing Dexie store
+/** Legacy open table — kept for backward compat with existing Dexie store */
 export interface OpenTable {
   id: string;
   tableNumber: number;
@@ -198,12 +201,12 @@ export interface OpenTable {
   updatedAt: string;
 }
 
-// ── New first-class TableOrder for /tables module ─────────────────────────────
 export interface TableOrderItem {
   cartId: string;
   menuItemId: string;
   name: string;
-  unitPricePaise: number; // CONTRACT: base menu price ONLY
+  /** CONTRACT: base menu price ONLY */
+  unitPricePaise: number;
   qty: number;
   selectedSize?: string;
   selectedPortion?: string;
@@ -226,10 +229,10 @@ export interface TableOrder {
   heldAt: string | null;
   createdAt: string;
   updatedAt: string;
-  /** For optimistic concurrency — increment on every write */
+  /** Increment on every write — higher version wins during sync conflict resolution */
   version: number;
   syncStatus: "pending" | "synced" | "failed";
-  /** P0-08: GST rate locked at table-open time. Rate changes never retroactively alter open tables. */
+  /** GST rate locked at table-open time. Rate changes never retroactively alter open tables. */
   gstPercentAtOpen?: number;
 }
 
@@ -242,9 +245,8 @@ export interface RestaurantTable {
   updatedAt: string;
 }
 
-// P0-01: Persisted cart record in IndexedDB
 export interface PersistedCart {
-  id: string;    // always "active_cart"
+  id: string; // always "active_cart"
   _uid: string;
   items: CartItem[];
   updatedAt: string;
