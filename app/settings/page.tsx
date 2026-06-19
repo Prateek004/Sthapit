@@ -50,7 +50,7 @@ export default function SettingsPage() {
       setOpenTableBilling(s.openTableBilling ?? false);
       setGstInclusive(s.gstInclusive ?? false); // P1-06
     }
-  }, [session?.userId]);
+  }, [session?.businessId]);
 
   const handleSave = async () => {
     if (!session) return;
