@@ -6,7 +6,7 @@ import { User, Lock, Eye, EyeOff, Loader2, Store, ChevronDown } from "lucide-rea
 import { signIn, signUp } from "@/lib/supabase/auth";
 import { useApp } from "@/lib/store/AppContext";
 import { HIDE_FRANCHISE } from "@/lib/utils";
-import type { UserRole, BusinessType } from "@/lib/types";
+import type { BusinessType } from "@/lib/types";
 
 type Mode = "signin" | "signup";
 
@@ -95,7 +95,6 @@ export default function AuthPage() {
   const [username, setUsername]           = useState("");
   const [password, setPassword]           = useState("");
   const [showPwd, setShowPwd]             = useState(false);
-  const [role, setRole]                   = useState<UserRole>("owner");
   const [businessName, setBusinessName]   = useState("");
   const [ownerName, setOwnerName]         = useState("");
   const [bizType, setBizType]             = useState("restaurant");
@@ -143,32 +142,60 @@ export default function AuthPage() {
 
     try {
       if (mode === "signup") {
-const result = await signUp({ username, password, businessName, ownerName, businessType: bizType });
+        // signUp now always creates an owner — no role field needed
+        const result = await signUp({
+          username,
+          password,
+          businessName,
+          ownerName,
+          businessType: bizType,
+        });
         if (!result.ok) { applyError(result.error ?? "Signup failed"); setLoading(false); return; }
 
-        // Always sign in right after signup — auth.ts saves locally so this works
-        // even when Supabase email confirmation is required
+        // Sign in immediately after signup to get the full session with businessId
         const loginResult = await signIn(username, password);
         if (!loginResult.ok) { applyError(loginResult.error ?? "Sign in failed"); setLoading(false); return; }
-        const uid = loginResult.userId ?? `local_${username}`;
-        await login({ userId: uid, username, role, businessName, businessType: bizType as BusinessType, gstPercent: 5 });
-        await loadMenuFromTemplate(bizType, uid);
+
+        const uid        = loginResult.userId ?? `local_${username}`;
+        const businessId = loginResult.businessId ?? result.businessId ?? uid;
+
+        await login({
+          userId: uid,
+          businessId,
+          username,
+          role: "owner",
+          businessName: loginResult.businessName ?? businessName,
+          businessType: (loginResult.businessType ?? bizType) as BusinessType,
+          gstPercent: loginResult.gstPercent ?? 5,
+          upiId: loginResult.upiId,
+          loggedInAt: new Date().toISOString(),
+        });
+        await loadMenuFromTemplate(bizType, businessId);
+
       } else {
+        // Sign in — works for both owners and cashiers
         const result = await signIn(username, password);
         if (!result.ok) { applyError(result.error ?? "Sign in failed"); setLoading(false); return; }
-        const uid = result.userId ?? `local_${username}`;
+
+        const uid        = result.userId ?? `local_${username}`;
+        const businessId = result.businessId ?? uid;
+
         await login({
-          userId: uid, username,
-          role: result.role ?? "cashier" as UserRole,
+          userId: uid,
+          businessId,
+          username,
+          role: result.role ?? "cashier",
           businessName: result.businessName ?? "",
           businessType: (result.businessType ?? "restaurant") as BusinessType,
           gstPercent: result.gstPercent ?? 5,
           upiId: result.upiId,
+          loggedInAt: new Date().toISOString(),
+          subscription: result.subscription,
         });
-        await loadMenuFromTemplate(result.businessType ?? "restaurant", uid);
+        await loadMenuFromTemplate(result.businessType ?? "restaurant", businessId);
       }
       router.replace("/pos");
-    } catch (e) {
+    } catch {
       setError("Something went wrong. Please try again.");
       setLoading(false);
     }
@@ -287,29 +314,10 @@ const result = await signUp({ username, password, businessName, ownerName, busin
                     <ChevronDown size={15} style={{ position: "absolute", right: 16, top: "50%", transform: "translateY(-50%)", color: ASH, pointerEvents: "none" }} />
                   </div>
 
-                  {/* Role pills */}
-                  <div>
-                    <p style={{ fontSize: 10, letterSpacing: "0.1em", color: ASH, fontFamily: "'DM Sans', sans-serif", fontWeight: 700, marginBottom: 8 }}>ROLE</p>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      {(["owner", "cashier"] as UserRole[]).map((r) => (
-                        <button
-                          key={r}
-                          onClick={() => setRole(r)}
-                          style={{
-                            flex: 1, padding: "10px 0", borderRadius: 50, fontSize: 12, fontWeight: 600,
-                            letterSpacing: "0.04em", textTransform: "capitalize", cursor: "pointer",
-                            fontFamily: "'DM Sans', sans-serif",
-                            border: `1px solid ${role === r ? FIRE : EMBER}`,
-                            color: role === r ? FIRE6 : ASH,
-                            background: role === r ? FIRE50 : WHITE,
-                            transition: "all 0.15s",
-                          }}
-                        >
-                          {r}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
+                  {/* Info note — role picker removed; signup always creates owner */}
+                  <p style={{ fontSize: 11, color: ASH, fontFamily: "'DM Sans', sans-serif", paddingLeft: 4 }}>
+                    Creating a business owner account. Add cashier accounts later in Settings.
+                  </p>
                 </>
               )}
             </div>
