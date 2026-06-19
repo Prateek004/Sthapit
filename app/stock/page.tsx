@@ -548,7 +548,7 @@ export default function StockPage() {
   const { state, upsertMenuItem, deleteMenuItem, upsertCategory, deleteCategory, showToast, setActiveStockTab } = useApp();
   const { session, menuItems, categories } = state;
   const isOwner = session?.role === "owner";
-  const uid = session?.userId ?? "default";
+  const uid = session?.businessId ?? "default";
 
   const ss = session?.stockSettings;
   const barEnabled = ss?.barEnabled ?? false;
