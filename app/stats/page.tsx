@@ -8,7 +8,7 @@ import { TrendingUp, Banknote, ShoppingBag, Smartphone } from "lucide-react";
 
 export default function StatsPage() {
   const { state } = useApp();
-  const uid = state.session?.userId ?? "default";
+  const uid = state.session?.businessId ?? "default";
   const [allOrders, setAllOrders] = useState<Order[]>([]);
 
   useEffect(() => {
