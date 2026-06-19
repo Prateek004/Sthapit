@@ -1,26 +1,39 @@
 import { getSupabase, isSupabaseEnabled } from "./client";
-import { dbUpdateTableOrderSyncStatus, dbAtomicUpdateTableOrder } from "@/lib/db";
+import {
+  dbUpdateTableOrderSyncStatus,
+  dbAtomicUpdateTableOrder,
+} from "@/lib/db";
 import type { TableOrder } from "@/lib/types";
-import { recordSyncFailure, recordSyncSuccess } from "@/lib/utils/observability";
+import {
+  recordSyncFailure,
+  recordSyncSuccess,
+} from "@/lib/utils/observability";
 
-// ── Sync single table order ───────────────────────────────────────────────────
-export async function syncTableOrder(order: TableOrder): Promise<boolean> {
+// ── Sync single table order ───────────────────────────────────
+// businessId = tenant key. All staff in a business share the same
+// live table state via this partition. Realtime filter uses business_id
+// so every cashier + owner on any device sees updates instantly.
+export async function syncTableOrder(
+  order: TableOrder,
+  businessId: string
+): Promise<boolean> {
   if (!isSupabaseEnabled()) return false;
   const sb = getSupabase();
   if (!sb) return false;
   try {
-    const { data: { user } } = await sb.auth.getUser();
+    const {
+      data: { user },
+    } = await sb.auth.getUser();
     if (!user) return false;
 
-    // FIX C-01: Always sync to Supabase — even for AVAILABLE/empty orders.
-    // For cleared tables, delete the remote row. This was the ghost-occupied bug.
+    // AVAILABLE or empty tables: delete the remote row (clears ghost-occupied)
     if (order.status === "AVAILABLE" || order.items.length === 0) {
       const { error } = await sb
         .from("table_orders")
         .delete()
         .eq("id", order.id)
-        .eq("user_id", user.id);
-      // Not-found is not an error — row may never have been synced
+        .eq("business_id", businessId);
+      // PGRST116 = row not found — not an error (may never have been synced)
       if (error && error.code !== "PGRST116") throw error;
       await dbUpdateTableOrderSyncStatus(order.id, "synced");
       recordSyncSuccess();
@@ -31,6 +44,7 @@ export async function syncTableOrder(order: TableOrder): Promise<boolean> {
       {
         id: order.id,
         user_id: user.id,
+        business_id: businessId,
         table_id: order.tableId,
         table_name: order.tableName,
         table_number: order.tableNumber,
@@ -60,27 +74,39 @@ export async function syncTableOrder(order: TableOrder): Promise<boolean> {
   }
 }
 
-// ── Bulk sync pending table orders ────────────────────────────────────────────
-export async function syncAllPendingTableOrders(uid: string): Promise<void> {
+// ── Bulk sync pending table orders ────────────────────────────
+export async function syncAllPendingTableOrders(
+  businessId: string
+): Promise<void> {
   if (!isSupabaseEnabled()) return;
   try {
     const { dbGetPendingTableOrders } = await import("@/lib/db");
-    const pending = await dbGetPendingTableOrders(uid);
+    const pending = await dbGetPendingTableOrders(businessId);
     if (!pending.length) return;
+
     const sb = getSupabase();
     if (!sb) return;
-    const { data: { user } } = await sb.auth.getUser();
+    const {
+      data: { user },
+    } = await sb.auth.getUser();
     if (!user) return;
 
-    // FIX H-02: Sync ALL pending orders regardless of status (not just OCCUPIED)
-    // AVAILABLE orders need to delete their remote row
-    const toDelete = pending.filter((o) => o.status === "AVAILABLE" || o.items.length === 0);
-    const toUpsert = pending.filter((o) => o.status === "OCCUPIED" && o.items.length > 0);
+    // AVAILABLE orders → delete remote row
+    const toDelete = pending.filter(
+      (o) => o.status === "AVAILABLE" || o.items.length === 0
+    );
+    // OCCUPIED orders → upsert
+    const toUpsert = pending.filter(
+      (o) => o.status === "OCCUPIED" && o.items.length > 0
+    );
 
-    // Delete cleared tables from Supabase
     for (const order of toDelete) {
       await Promise.resolve(
-        sb.from("table_orders").delete().eq("id", order.id).eq("user_id", user.id)
+        sb
+          .from("table_orders")
+          .delete()
+          .eq("id", order.id)
+          .eq("business_id", businessId)
       )
         .then(() => dbUpdateTableOrderSyncStatus(order.id, "synced"))
         .catch(() => {});
@@ -90,6 +116,7 @@ export async function syncAllPendingTableOrders(uid: string): Promise<void> {
       const rows = toUpsert.map((order) => ({
         id: order.id,
         user_id: user.id,
+        business_id: businessId,
         table_id: order.tableId,
         table_name: order.tableName,
         table_number: order.tableNumber,
@@ -106,45 +133,52 @@ export async function syncAllPendingTableOrders(uid: string): Promise<void> {
         gst_percent_at_open: order.gstPercentAtOpen ?? null,
       }));
 
-      const { error } = await sb.from("table_orders").upsert(rows, { onConflict: "id" });
+      const { error } = await sb
+        .from("table_orders")
+        .upsert(rows, { onConflict: "id" });
       if (!error) {
-        for (const o of toUpsert) await dbUpdateTableOrderSyncStatus(o.id, "synced");
+        for (const o of toUpsert)
+          await dbUpdateTableOrderSyncStatus(o.id, "synced");
         recordSyncSuccess();
         return;
       }
     }
+
     // Fallback: individual
-    for (const order of pending) await syncTableOrder(order);
+    for (const order of pending) await syncTableOrder(order, businessId);
   } catch {
     recordSyncFailure();
   }
 }
 
-// ── Restore from Supabase ─────────────────────────────────────────────────────
-export async function restoreTableOrdersFromSupabase(uid: string): Promise<void> {
+// ── Restore table orders from Supabase on login/device wipe ──
+export async function restoreTableOrdersFromSupabase(
+  businessId: string
+): Promise<void> {
   if (!isSupabaseEnabled()) return;
   const sb = getSupabase();
   if (!sb) return;
   try {
-    const { data: { user } } = await sb.auth.getUser();
+    const {
+      data: { user },
+    } = await sb.auth.getUser();
     if (!user) return;
 
-    // FIX H-06: Fetch ALL table orders (not just OCCUPIED) so we can clear
-    // stale local OCCUPIED records that were cleared on another device
     const { data: remoteOrders, error } = await sb
       .from("table_orders")
       .select("*")
-      .eq("user_id", user.id);
+      .eq("business_id", businessId);
 
     if (error) return;
 
-    const { dbGetAllTableOrders, dbSaveTableOrder, dbDeleteTableOrder } = await import("@/lib/db");
-    const localOrders = await dbGetAllTableOrders(uid);
+    const { dbGetAllTableOrders, dbSaveTableOrder, dbDeleteTableOrder } =
+      await import("@/lib/db");
+    const localOrders = await dbGetAllTableOrders(businessId);
     const localMap = new Map(localOrders.map((o) => [o.id, o]));
     const remoteIds = new Set((remoteOrders ?? []).map((r) => r.id));
 
-    // Apply remote state (newer wins)
-    for (const remote of (remoteOrders ?? [])) {
+    // Apply remote state (higher version wins)
+    for (const remote of remoteOrders ?? []) {
       const local = localMap.get(remote.id);
       if (!local || remote.version > local.version) {
         const order: TableOrder = {
@@ -165,25 +199,31 @@ export async function restoreTableOrdersFromSupabase(uid: string): Promise<void>
           syncStatus: "synced",
           gstPercentAtOpen: remote.gst_percent_at_open ?? undefined,
         };
-        await dbSaveTableOrder(order, uid);
+        await dbSaveTableOrder(order, businessId);
       }
     }
 
-    // FIX H-06: Remove local OCCUPIED orders that no longer exist on remote
-    // (they were cleared by another device while this device was offline)
+    // Remove local OCCUPIED orders that no longer exist on remote
+    // (cleared by another device while this device was offline)
     for (const local of localOrders) {
-      if (!remoteIds.has(local.id) && local.status === "OCCUPIED" && local.syncStatus === "synced") {
-        await dbDeleteTableOrder(local.id, uid);
+      if (
+        !remoteIds.has(local.id) &&
+        local.status === "OCCUPIED" &&
+        local.syncStatus === "synced"
+      ) {
+        await dbDeleteTableOrder(local.id, businessId);
       }
     }
   } catch {
-    // silent
+    // silent — local data takes precedence when offline
   }
 }
 
-// ── Realtime subscription ─────────────────────────────────────────────────────
+// ── Realtime subscription ─────────────────────────────────────
+// Filtered by business_id — every staff member of the same business
+// gets the same live table updates regardless of who is logged in.
 export function subscribeToTableOrders(
-  userId: string,
+  businessId: string,
   onUpdate: (order: TableOrder) => void,
   onDelete: (orderId: string) => void
 ): () => void {
@@ -192,21 +232,23 @@ export function subscribeToTableOrders(
   if (!sb) return () => {};
 
   const channel = sb
-    .channel(`table_orders:${userId}`)
+    .channel(`table_orders:${businessId}`)
     .on(
       "postgres_changes",
       {
         event: "*",
         schema: "public",
         table: "table_orders",
-        filter: `user_id=eq.${userId}`,
+        filter: `business_id=eq.${businessId}`,
       },
       async (payload) => {
         if (payload.eventType === "DELETE") {
           onDelete(payload.old.id as string);
-          // FIX H-06: Also clean up IDB when remote deletes
           const { dbDeleteTableOrder } = await import("@/lib/db");
-          await dbDeleteTableOrder(payload.old.id as string, userId).catch(() => {});
+          await dbDeleteTableOrder(
+            payload.old.id as string,
+            businessId
+          ).catch(() => {});
           return;
         }
         const remote = payload.new as Record<string, unknown>;
@@ -226,10 +268,11 @@ export function subscribeToTableOrders(
           updatedAt: remote.updated_at as string,
           version: remote.version as number,
           syncStatus: "synced",
-          gstPercentAtOpen: (remote.gst_percent_at_open as number) ?? undefined,
+          gstPercentAtOpen:
+            (remote.gst_percent_at_open as number) ?? undefined,
         };
         const { dbSaveTableOrder } = await import("@/lib/db");
-        await dbSaveTableOrder(order, userId);
+        await dbSaveTableOrder(order, businessId);
         onUpdate(order);
       }
     )
