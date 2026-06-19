@@ -64,6 +64,10 @@ function PlanCard({
   );
 }
 
+type RazorpayInstance = { open: () => void };
+type RazorpayConstructor = new (options: Record<string, unknown>) => RazorpayInstance;
+type WindowWithRazorpay = { Razorpay: RazorpayConstructor };
+
 export function BillingPanel() {
   const { state, showToast } = useApp();
   const [loading, setLoading] = useState<Plan | null>(null);
@@ -93,6 +97,7 @@ export function BillingPanel() {
       const sb = getSupabase();
       if (!sb) {
         showToast("Cloud sync required to upgrade", "error");
+        setLoading(null);
         return;
       }
       const {
@@ -100,6 +105,7 @@ export function BillingPanel() {
       } = await sb.auth.getSession();
       if (!session) {
         showToast("Please log in with cloud sync enabled", "error");
+        setLoading(null);
         return;
       }
 
@@ -115,12 +121,13 @@ export function BillingPanel() {
       const data = await res.json();
       if (!res.ok) {
         showToast(data.error ?? "Failed to start checkout", "error");
+        setLoading(null);
         return;
       }
 
-      // Load Razorpay checkout script
+      // Load Razorpay checkout script if not already present
       await new Promise<void>((resolve, reject) => {
-        if ((window as Window & { Razorpay?: unknown }).Razorpay) {
+        if ((window as unknown as { Razorpay?: unknown }).Razorpay) {
           resolve();
           return;
         }
@@ -131,14 +138,9 @@ export function BillingPanel() {
         document.body.appendChild(script);
       });
 
-      // Open Razorpay checkout
-      const rzp = new (
-        window as Window & {
-          Razorpay: new (options: Record<string, unknown>) => {
-            open: () => void;
-          };
-        }
-      ).Razorpay({
+      // Open Razorpay subscription checkout
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const rzp = new (window as unknown as WindowWithRazorpay).Razorpay({
         key: data.keyId,
         subscription_id: data.subscriptionId,
         name: "Sthappit",
@@ -148,8 +150,7 @@ export function BillingPanel() {
             "Payment received! Your plan will activate shortly.",
             "success"
           );
-          // Webhook will update the subscription status server-side
-          // Refresh after a short delay to pick up new status
+          // Webhook activates the subscription server-side — reload to reflect new status
           setTimeout(() => window.location.reload(), 3000);
         },
         prefill: {
@@ -161,9 +162,8 @@ export function BillingPanel() {
         },
       });
       rzp.open();
-    } catch (err) {
+    } catch {
       showToast("Something went wrong. Please try again.", "error");
-    } finally {
       setLoading(null);
     }
   }
@@ -191,12 +191,16 @@ export function BillingPanel() {
         )}
         {status === "active" && (
           <div className="rounded-lg bg-green-500/10 border border-green-500/20 px-4 py-3 text-sm text-green-300">
-            ✓ Active — {currentPlan.charAt(0).toUpperCase() + currentPlan.slice(1)} plan
+            ✓ Active —{" "}
+            {currentPlan.charAt(0).toUpperCase() + currentPlan.slice(1)} plan
           </div>
         )}
-        {(status === "past_due" || status === "expired" || status === "canceled") && (
+        {(status === "past_due" ||
+          status === "expired" ||
+          status === "canceled") && (
           <div className="rounded-lg bg-red-500/10 border border-red-500/20 px-4 py-3 text-sm text-red-300">
-            ⚠ Your subscription is {status.replace("_", " ")}. Upgrade to restore access.
+            ⚠ Your subscription is {status.replace("_", " ")}. Upgrade to
+            restore access.
           </div>
         )}
       </div>
@@ -234,7 +238,8 @@ export function BillingPanel() {
       </div>
 
       <p className="mt-4 text-xs text-white/30">
-        Payments are processed securely via Razorpay. You can cancel anytime from the Razorpay dashboard.
+        Payments are processed securely via Razorpay. You can cancel anytime
+        from the Razorpay dashboard.
       </p>
     </div>
   );
