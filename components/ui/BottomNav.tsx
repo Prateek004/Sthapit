@@ -8,6 +8,7 @@ import {
   Package,
   LayoutDashboard,
   LayoutGrid,
+  Zap,
 } from "lucide-react";
 import { useApp } from "@/lib/store/AppContext";
 
@@ -21,7 +22,10 @@ export default function BottomNav() {
   const TABS = [
     // Dashboard — owner only
     ...(isOwner
-      ? [{ href: "/dashboard", label: "Home", Icon: LayoutDashboard }]
+      ? [
+          { href: "/dashboard", label: "Home", Icon: LayoutDashboard },
+          { href: "/ai-dashboard", label: "AI", Icon: Zap },
+        ]
       : []),
     { href: "/pos", label: "POS", Icon: ShoppingCart },
     ...(tablesEnabled
