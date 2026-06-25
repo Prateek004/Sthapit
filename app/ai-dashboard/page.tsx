@@ -4,62 +4,21 @@ import { useApp } from "@/lib/store/AppContext";
 import AppShell from "@/components/ui/AppShell";
 import { detectLeaks, Leak } from "@/components/ai/LeakEngine";
 import SthappitChat from "@/components/ai/SthappitChat";
+import LeaksPanel from "@/components/ai/LeaksPanel";
+import InventoryTable from "@/components/ai/InventoryTable";
+import BillingTable from "@/components/ai/BillingTable";
 import { fmtRupee, todayStr } from "@/lib/utils";
 import { dbGetAllOrders, dbGetAllRawMaterials } from "@/lib/db";
-import { AlertTriangle, TrendingDown, Package, CheckCircle, Clock } from "lucide-react";
+import { AlertTriangle, Leaf, ListChecks, MessageCircle } from "lucide-react";
 import type { Order, RawMaterial } from "@/lib/types";
 
-function ConfidencePill({ confidence }: { confidence: "Confirmed" | "Estimated" }) {
-  if (confidence === "Confirmed") {
-    return (
-      <span
-        style={{
-          background: "#0D2B1A",
-          border: "1px solid #00C896",
-          color: "#00C896",
-          fontSize: 10,
-          fontWeight: 700,
-          padding: "3px 8px",
-          borderRadius: 999,
-          letterSpacing: "0.04em",
-        }}
-      >
-        ● CONFIRMED
-      </span>
-    );
-  }
-  return (
-    <span
-      style={{
-        background: "#2B260D",
-        border: "1px solid #D4B106",
-        color: "#D4B106",
-        fontSize: 10,
-        fontWeight: 700,
-        padding: "3px 8px",
-        borderRadius: 999,
-        letterSpacing: "0.04em",
-      }}
-    >
-      ● ESTIMATED
-    </span>
-  );
-}
+type ModuleTab = "leaks" | "inventory" | "billing" | "chat";
 
-function leakIcon(type: Leak["type"]) {
-  switch (type) {
-    case "discount_anomaly":
-    case "refund_no_pin":
-      return AlertTriangle;
-    case "aggregator_mismatch":
-      return TrendingDown;
-    case "low_stock":
-    case "high_void_rate":
-      return Package;
-    default:
-      return AlertTriangle;
-  }
-}
+const MODULES: { id: ModuleTab; label: string; Icon: typeof AlertTriangle }[] = [
+  { id: "leaks", label: "Profit Leaks", Icon: AlertTriangle },
+  { id: "inventory", label: "Inventory", Icon: Leaf },
+  { id: "billing", label: "Billing", Icon: ListChecks },
+];
 
 export default function AiDashboardPage() {
   const { state } = useApp();
@@ -67,6 +26,7 @@ export default function AiDashboardPage() {
   const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([]);
   const [leaks, setLeaks] = useState<Leak[]>([]);
   const [loading, setLoading] = useState(true);
+  const [activeModule, setActiveModule] = useState<ModuleTab>("leaks");
 
   useEffect(() => {
     let cancelled = false;
@@ -125,7 +85,7 @@ export default function AiDashboardPage() {
     );
   }
 
-  const topLeak = leaks.length > 0 ? leaks[0] : null;
+  const businessId = state.session?.businessId ?? "default";
 
   return (
     <AppShell>
@@ -138,9 +98,72 @@ export default function AiDashboardPage() {
         }}
       >
         <div
-          className="grid grid-cols-1 lg:grid-cols-[1fr_380px]"
+          className="grid grid-cols-1 lg:grid-cols-[180px_1fr_380px]"
           style={{ minHeight: "100dvh" }}
         >
+          {/* MODULE SIDEBAR — desktop only, mobile gets a horizontal tab row instead */}
+          <div
+            className="hidden lg:flex lg:flex-col lg:h-[100dvh]"
+            style={{
+              borderRight: "1px solid #1C2D24",
+              padding: "24px 0",
+            }}
+          >
+            <div style={{ padding: "0 20px 12px", fontSize: 10, color: "#4A6A58", textTransform: "uppercase", letterSpacing: "0.12em" }}>
+              // MODULES
+            </div>
+            {MODULES.map(({ id, label, Icon }) => {
+              const active = activeModule === id;
+              return (
+                <button
+                  key={id}
+                  onClick={() => setActiveModule(id)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    padding: "10px 20px",
+                    fontSize: 13,
+                    fontWeight: active ? 700 : 400,
+                    color: active ? "#00C896" : "#6B8F7A",
+                    background: active ? "rgba(0,200,150,0.08)" : "transparent",
+                    border: "none",
+                    borderLeft: active ? "2px solid #00C896" : "2px solid transparent",
+                    cursor: "pointer",
+                    textAlign: "left",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  <Icon size={16} />
+                  <span>{label}</span>
+                </button>
+              );
+            })}
+            <div style={{ borderTop: "1px solid #1C2D24", margin: "12px 20px" }} />
+            <button
+              onClick={() => setActiveModule("chat")}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                padding: "10px 20px",
+                fontSize: 13,
+                fontWeight: activeModule === "chat" ? 700 : 400,
+                color: activeModule === "chat" ? "#00C896" : "#6B8F7A",
+                background: activeModule === "chat" ? "rgba(0,200,150,0.08)" : "transparent",
+                border: "none",
+                borderLeft: activeModule === "chat" ? "2px solid #00C896" : "2px solid transparent",
+                cursor: "pointer",
+                textAlign: "left",
+                fontFamily: "inherit",
+              }}
+            >
+              <MessageCircle size={16} />
+              <span>Ask STHAPPIT</span>
+            </button>
+          </div>
+
+          {/* CENTER COLUMN */}
           <div
             className="lg:h-[100dvh] lg:overflow-y-auto"
             style={{
@@ -184,7 +207,41 @@ export default function AiDashboardPage() {
               </div>
             </div>
 
-            {/* SECTION B — KPI bar */}
+            {/* MOBILE MODULE TABS — replaces sidebar below lg breakpoint */}
+            <div className="flex lg:hidden" style={{ gap: 8, overflowX: "auto" }}>
+              {[...MODULES, { id: "chat" as ModuleTab, label: "Ask STHAPPIT", Icon: MessageCircle }].map(
+                ({ id, label, Icon }) => {
+                  const active = activeModule === id;
+                  return (
+                    <button
+                      key={id}
+                      onClick={() => setActiveModule(id)}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        padding: "8px 14px",
+                        fontSize: 12,
+                        fontWeight: active ? 700 : 400,
+                        color: active ? "#0A1A0F" : "#6B8F7A",
+                        background: active ? "#00C896" : "#1C2D24",
+                        border: "1px solid",
+                        borderColor: active ? "#00C896" : "#2A3D30",
+                        borderRadius: 999,
+                        cursor: "pointer",
+                        whiteSpace: "nowrap",
+                        fontFamily: "inherit",
+                      }}
+                    >
+                      <Icon size={13} />
+                      {label}
+                    </button>
+                  );
+                }
+              )}
+            </div>
+
+            {/* SECTION B — KPI bar — always visible regardless of active module */}
             <div className="grid grid-cols-2 lg:grid-cols-4" style={{ gap: 16 }}>
               <div
                 style={{
@@ -263,330 +320,24 @@ export default function AiDashboardPage() {
               </div>
             </div>
 
-            {/* SECTION C — Next Best Action */}
-            {topLeak && (
-              <div
-                style={{
-                  background: "#1C2D24",
-                  border: "1px solid #00C896",
-                  borderRadius: 16,
-                  padding: 24,
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                    <div
-                      style={{
-                        width: 20,
-                        height: 20,
-                        background: "#00C896",
-                        borderRadius: 6,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        flexShrink: 0,
-                      }}
-                    >
-                      <AlertTriangle size={12} color="#0A1A0F" />
-                    </div>
-                    <span style={{ fontSize: 10, color: "#4A6A58", textTransform: "uppercase", letterSpacing: "0.1em" }}>
-                      // NEXT BEST ACTION
-                    </span>
-                    <ConfidencePill confidence={topLeak.confidence} />
-                    <span style={{ fontSize: 11, color: "#4A6A58", display: "flex", alignItems: "center", gap: 4 }}>
-                      <Clock size={11} /> ~3 min effort
-                    </span>
-                  </div>
-                  <div style={{ textAlign: "right" }}>
-                    <div style={{ fontSize: 10, color: "#4A6A58", textTransform: "uppercase", letterSpacing: "0.1em" }}>
-                      RECOVER / WEEK
-                    </div>
-                    <div style={{ fontFamily: "'Syne', sans-serif", fontWeight: 700, fontSize: 32, color: "white" }}>
-                      {fmtRupee(topLeak.impactPaise)}
-                    </div>
-                  </div>
-                </div>
-
-                <div style={{ color: "white", fontSize: 24, fontWeight: 700, marginTop: 16 }}>
-                  {topLeak.title}
-                </div>
-                <div style={{ color: "#6B8F7A", fontSize: 14, marginTop: 8 }}>
-                  {topLeak.why}
-                </div>
-
-                <div style={{ display: "flex", gap: 12, marginTop: 20, flexWrap: "wrap" }}>
-                  <button
-                    style={{
-                      background: "#00C896",
-                      color: "#0A1A0F",
-                      fontWeight: 700,
-                      padding: "12px 20px",
-                      borderRadius: 10,
-                      border: "none",
-                      cursor: "pointer",
-                      fontSize: 14,
-                    }}
-                  >
-                    Act on this →
-                  </button>
-                  <button
-                    style={{
-                      background: "transparent",
-                      border: "1px solid #2A3D30",
-                      color: "#6B8F7A",
-                      padding: "12px 20px",
-                      borderRadius: 10,
-                      cursor: "pointer",
-                      fontSize: 14,
-                    }}
-                  >
-                    SEE ALL LEAKS
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* SECTION D — Profit Leak Ledger */}
-            {leaks.length > 0 && (
-              <div>
-                <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
-                  <div>
-                    <div style={{ fontSize: 10, color: "#4A6A58", textTransform: "uppercase", letterSpacing: "0.1em" }}>
-                      // PROFIT LEAK LEDGER
-                    </div>
-                    <div style={{ color: "white", fontSize: 16, fontWeight: 700, marginTop: 4 }}>
-                      Ranked by recoverable rupees
-                    </div>
-                  </div>
-                  <div style={{ textAlign: "right" }}>
-                    <div style={{ fontSize: 10, color: "#4A6A58", textTransform: "uppercase" }}>
-                      TOTAL IMPACT
-                    </div>
-                    <div style={{ fontFamily: "'Syne', sans-serif", fontWeight: 700, fontSize: 20, color: "white" }}>
-                      {fmtRupee(totalLeakPaise)}
-                    </div>
-                  </div>
-                </div>
-
-                <div
-                  style={{
-                    background: "#1C2D24",
-                    border: "1px solid #2A3D30",
-                    borderRadius: 12,
-                    overflow: "hidden",
-                  }}
-                >
-                  {leaks.map((leak, idx) => {
-                    const Icon = leakIcon(leak.type);
-                    return (
-                      <div
-                        key={leak.id}
-                        style={{
-                          padding: "16px 20px",
-                          borderBottom: idx === leaks.length - 1 ? "none" : "1px solid #2A3D30",
-                        }}
-                      >
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                            <Icon size={16} color="#EF4444" />
-                            <span style={{ fontSize: 10, color: "#4A6A58", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                              {leak.type.replace(/_/g, " ")}
-                            </span>
-                            <ConfidencePill confidence={leak.confidence} />
-                          </div>
-                          <div style={{ textAlign: "right" }}>
-                            <div style={{ fontSize: 10, color: "#4A6A58", textTransform: "uppercase" }}>IMPACT</div>
-                            <div style={{ fontFamily: "'Syne', sans-serif", fontWeight: 700, fontSize: 18, color: "#EF4444" }}>
-                              {fmtRupee(leak.impactPaise)}
-                            </div>
-                          </div>
-                        </div>
-
-                        <div style={{ color: "white", fontSize: 15, fontWeight: 600, marginTop: 4 }}>
-                          {leak.title}
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2" style={{ gap: 16, marginTop: 8 }}>
-                          <div>
-                            <div style={{ fontSize: 10, color: "#4A6A58", textTransform: "uppercase" }}>WHY</div>
-                            <div style={{ color: "#A8C4B0", fontSize: 13, marginTop: 2 }}>{leak.why}</div>
-                          </div>
-                          <div>
-                            <div style={{ fontSize: 10, color: "#4A6A58", textTransform: "uppercase" }}>NEXT ACTION</div>
-                            <div style={{ color: "#A8C4B0", fontSize: 13, marginTop: 2 }}>{leak.nextAction}</div>
-                          </div>
-                        </div>
-
-                        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-                          <button
-                            style={{
-                              background: "#0D2B1A",
-                              border: "1px solid #00C896",
-                              color: "#00C896",
-                              padding: "6px 14px",
-                              borderRadius: 8,
-                              fontSize: 12,
-                              cursor: "pointer",
-                            }}
-                          >
-                            ✓ Resolve
-                          </button>
-                          <button
-                            style={{
-                              background: "transparent",
-                              border: "1px solid #2A3D30",
-                              color: "#4A6A58",
-                              padding: "6px 14px",
-                              borderRadius: 8,
-                              fontSize: 12,
-                              cursor: "pointer",
-                            }}
-                          >
-                            ⏸ Snooze
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* SECTION E — Inventory Reorder Intelligence */}
-            {lowStockItems.length > 0 && (
-              <div>
-                <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
-                  <div style={{ fontSize: 10, color: "#4A6A58", textTransform: "uppercase", letterSpacing: "0.1em" }}>
-                    // INVENTORY · REORDER INTELLIGENCE
-                  </div>
-                  <div style={{ fontSize: 11, color: "#4A6A58" }}>
-                    {lowStockItems.length} reorder signals
-                  </div>
-                </div>
-
-                <div style={{ overflowX: "auto" }}>
-                  <table
-                    style={{
-                      width: "100%",
-                      borderCollapse: "collapse",
-                      background: "#1C2D24",
-                      borderRadius: 12,
-                    }}
-                  >
-                    <thead>
-                      <tr>
-                        {["ITEM", "ON HAND", "REORDER AT", "VENDOR", "CONFIDENCE", "ACTION"].map((h) => (
-                          <th
-                            key={h}
-                            style={{
-                              fontSize: 10,
-                              color: "#4A6A58",
-                              textTransform: "uppercase",
-                              padding: "12px 16px",
-                              borderBottom: "1px solid #2A3D30",
-                              textAlign: "left",
-                              fontWeight: 400,
-                              letterSpacing: "0.08em",
-                            }}
-                          >
-                            {h}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {lowStockItems.map((item, idx) => (
-                        <tr
-                          key={item.id}
-                          style={{
-                            borderBottom: idx === lowStockItems.length - 1 ? "none" : "1px solid #2A3D30",
-                          }}
-                        >
-                          <td style={{ padding: "12px 16px" }}>
-                            <div style={{ color: "white", fontSize: 14, fontWeight: 700 }}>{item.name}</div>
-                            <div style={{ color: "#4A6A58", fontSize: 10, textTransform: "uppercase", marginTop: 2 }}>
-                              {item.name}
-                            </div>
-                          </td>
-                          <td
-                            style={{
-                              padding: "12px 16px",
-                              color: item.currentStock < (item.minStock ?? 0) ? "#EF4444" : "white",
-                              fontSize: 13,
-                            }}
-                          >
-                            {item.currentStock} {item.unit}
-                          </td>
-                          <td style={{ padding: "12px 16px", color: "#A8C4B0", fontSize: 13 }}>
-                            {item.minStock ?? 0} {item.unit}
-                          </td>
-                          <td style={{ padding: "12px 16px", color: "#4A6A58", fontSize: 13 }}>—</td>
-                          <td style={{ padding: "12px 16px" }}>
-                            <span
-                              style={{
-                                background: "#0D2B1A",
-                                border: "1px solid #00C896",
-                                color: "#00C896",
-                                fontSize: 10,
-                                fontWeight: 700,
-                                padding: "3px 8px",
-                                borderRadius: 999,
-                                letterSpacing: "0.04em",
-                              }}
-                            >
-                              ● CONFIRMED
-                            </span>
-                          </td>
-                          <td style={{ padding: "12px 16px" }}>
-                            <button
-                              style={{
-                                background: "#00C896",
-                                color: "#0A1A0F",
-                                fontWeight: 700,
-                                padding: "6px 16px",
-                                borderRadius: 8,
-                                border: "none",
-                                fontSize: 12,
-                                cursor: "pointer",
-                                whiteSpace: "nowrap",
-                              }}
-                            >
-                              ⟳ Reorder
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            {leaks.length === 0 && (
-              <div
-                style={{
-                  background: "#1C2D24",
-                  border: "1px solid #2A3D30",
-                  borderRadius: 12,
-                  padding: 24,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 12,
-                }}
-              >
-                <CheckCircle size={20} color="#00C896" />
-                <div style={{ color: "#A8C4B0", fontSize: 14 }}>
-                  No leaks detected today. Profit looks clean — keep it that way.
-                </div>
+            {/* ACTIVE MODULE CONTENT */}
+            {activeModule === "leaks" && <LeaksPanel leaks={leaks} businessId={businessId} />}
+            {activeModule === "inventory" && <InventoryTable items={lowStockItems} />}
+            {activeModule === "billing" && <BillingTable orders={allOrders} leaks={leaks} />}
+            {activeModule === "chat" && (
+              <div className="lg:hidden" style={{ height: 500, overflow: "hidden", borderRadius: 12 }}>
+                <SthappitChat
+                  orders={allOrders}
+                  rawMaterials={rawMaterials}
+                  businessName={state.session?.businessName ?? ""}
+                  leaks={leaks}
+                />
               </div>
             )}
           </div>
 
-          {/* RIGHT COLUMN */}
-          <div
-            className="lg:h-[100dvh]"
-            style={{ height: 500, overflow: "hidden" }}
-          >
+          {/* RIGHT COLUMN — chat always visible on desktop */}
+          <div className="hidden lg:block lg:h-[100dvh]" style={{ overflow: "hidden" }}>
             <SthappitChat
               orders={allOrders}
               rawMaterials={rawMaterials}
