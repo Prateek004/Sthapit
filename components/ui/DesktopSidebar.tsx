@@ -9,6 +9,7 @@ import {
   LayoutDashboard,
   LayoutGrid,
   Package,
+  Zap,
 } from "lucide-react";
 import { useApp } from "@/lib/store/AppContext";
 
@@ -53,7 +54,10 @@ export default function DesktopSidebar() {
   const NAV = [
     // Dashboard — owner only
     ...(isOwner
-      ? [{ href: "/dashboard", label: "Dashboard", Icon: LayoutDashboard }]
+      ? [
+          { href: "/dashboard", label: "Dashboard", Icon: LayoutDashboard },
+          { href: "/ai-dashboard", label: "Profit AI", Icon: Zap },
+        ]
       : []),
     { href: "/pos", label: "POS", Icon: ShoppingCart },
     ...(tablesEnabled
