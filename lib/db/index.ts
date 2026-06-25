@@ -8,6 +8,7 @@ import type {
   OpenTable,
   TableOrder,
   PersistedCart,
+  LeakAction,
 } from "@/lib/types";
 import { recordIdbError } from "@/lib/utils/observability";
 
@@ -114,6 +115,7 @@ class Sth1rDB extends Dexie {
   openTables!:    Table<WithUid<OpenTable>,    string>;
   tableOrders!:   Table<WithUid<TableOrder>,   string>;
   carts!:         Table<PersistedCart,         string>;
+  leakActions!:   Table<WithUid<LeakAction>,   string>;
 
   constructor() {
     super("sth1r_db");
@@ -159,6 +161,20 @@ class Sth1rDB extends Dexie {
       openTables:    "id, _uid, tableNumber",
       tableOrders:   "id, _uid, tableId, status, syncStatus, updatedAt",
       carts:         "id",
+    });
+    // Version 5: leakActions store for Profit AI — Resolve/Snooze persistence.
+    // Purely additive: existing stores are unchanged.
+    this.version(5).stores({
+      orders:        "id, _uid, createdAt, syncStatus, status",
+      menuItems:     "id, _uid, categoryId",
+      categories:    "id, _uid, sortOrder",
+      rawMaterials:  "id, _uid, name",
+      finishedGoods: "id, _uid, name, expiryDate",
+      barItems:      "id, _uid, name, expiryDate",
+      openTables:    "id, _uid, tableNumber",
+      tableOrders:   "id, _uid, tableId, status, syncStatus, updatedAt",
+      carts:         "id",
+      leakActions:   "id, _uid",
     });
   }
 }
@@ -610,6 +626,47 @@ export async function dbAtomicUpdateTableOrder(
       await db.tableOrders.put({ ...next, _uid: uid });
       return next;
     });
+  } catch (err) {
+    recordIdbError();
+    throw err;
+  }
+}
+
+// ── Leak Actions (Profit AI — Resolve/Snooze) ────────────────────────────────
+export async function dbGetLeakActions(uid: string): Promise<LeakAction[]> {
+  try {
+    const db = await getDB();
+    return db.leakActions.where("_uid").equals(uid).toArray() as unknown as LeakAction[];
+  } catch {
+    recordIdbError();
+    return [];
+  }
+}
+
+export async function dbSetLeakAction(
+  uid: string,
+  leakActionId: string,
+  status: LeakAction["status"]
+): Promise<void> {
+  try {
+    const db = await getDB();
+    await db.leakActions.put({
+      id: leakActionId,
+      status,
+      updatedAt: new Date().toISOString(),
+      _uid: uid,
+    });
+  } catch (err) {
+    recordIdbError();
+    throw err;
+  }
+}
+
+export async function dbClearLeakAction(uid: string, leakActionId: string): Promise<void> {
+  try {
+    const db = await getDB();
+    const rec = await db.leakActions.get(leakActionId);
+    if (rec && rec._uid === uid) await db.leakActions.delete(leakActionId);
   } catch (err) {
     recordIdbError();
     throw err;
