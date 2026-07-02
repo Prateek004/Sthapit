@@ -3,6 +3,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { Order, RawMaterial } from "@/lib/types";
 import { Leak } from "@/components/ai/LeakEngine";
 import { Send } from "lucide-react";
+import { getSupabase } from "@/lib/supabase/client";
 
 interface Props {
   orders: Order[];
@@ -39,12 +40,21 @@ export default function SthappitChat({ orders, rawMaterials, businessName, leaks
     setLoading(true);
 
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
+      // Get session token if Supabase is configured — route requires it in production
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      const sb = getSupabase();
+      if (sb) {
+        const { data: { session } } = await sb.auth.getSession();
+        if (session?.access_token) {
+          headers["Authorization"] = `Bearer ${session.access_token}`;
+        }
+      }
+
+      const res = await fetch("/api/ai-chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({
-          model: "claude-sonnet-4-6",
-          max_tokens: 400,
+          message: userText,
           system: `You are STHAPPIT, an AI profit assistant for ${businessName}.
 RULES:
 - Only use the data provided below. Never invent numbers.
@@ -56,11 +66,12 @@ DATA:
 Today orders (${orders.length}): ${JSON.stringify(orders.slice(0, 40))}
 Detected leaks: ${JSON.stringify(leaks)}
 Raw materials: ${JSON.stringify(rawMaterials.slice(0, 25))}`,
-          messages: [{ role: "user", content: userText }],
         }),
       });
       const data = await res.json();
-      const text: string = data?.content?.[0]?.text ?? "No response from AI.";
+      const text: string = res.ok
+        ? data?.text ?? "No response from AI."
+        : data?.error ?? "Could not reach AI. Check your connection.";
       setMessages((prev) => [...prev, { role: "assistant", text }]);
     } catch {
       setMessages((prev) => [
