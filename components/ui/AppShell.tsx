@@ -7,7 +7,7 @@ import BottomNav from "./BottomNav";
 import { Lock } from "lucide-react";
 
 // Pages only an owner can visit. Cashiers are redirected to /pos.
-const OWNER_ONLY_PATHS = ["/dashboard", "/stock", "/settings", "/stats", "/menu"];
+const OWNER_ONLY_PATHS = ["/dashboard", "/stock", "/settings", "/stats", "/menu", "/ai-dashboard"];
 
 function LoadingScreen() {
   return (
