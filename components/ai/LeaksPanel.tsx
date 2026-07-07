@@ -1,10 +1,10 @@
 "use client";
 import React, { useEffect, useMemo, useState } from "react";
-import type { Leak } from "@/components/ai/LeakEngine";
+import type { Leak, LeakConfidence } from "@/components/ai/LeakEngine";
 import { fmtRupee, todayStr } from "@/lib/utils";
 import { dbGetLeakActions, dbSetLeakAction } from "@/lib/db";
 import type { LeakActionStatus } from "@/lib/types";
-import { AlertTriangle, TrendingDown, Package, Clock, CheckCircle } from "lucide-react";
+import { AlertTriangle, TrendingDown, Package, Clock, CheckCircle, PieChart, EyeOff } from "lucide-react";
 
 interface Props {
   leaks: Leak[];
@@ -21,37 +21,34 @@ function leakIcon(type: Leak["type"]) {
     case "low_stock":
     case "high_void_rate":
       return Package;
+    case "menu_margin":
+      return PieChart;
+    case "silent_item":
+      return EyeOff;
     default:
       return AlertTriangle;
   }
 }
 
-function ConfidencePill({ confidence }: { confidence: "Confirmed" | "Estimated" }) {
-  if (confidence === "Confirmed") {
-    return (
-      <span
-        style={{
-          background: "#0D2B1A",
-          border: "1px solid #00C896",
-          color: "#00C896",
-          fontSize: 10,
-          fontWeight: 700,
-          padding: "3px 8px",
-          borderRadius: 999,
-          letterSpacing: "0.04em",
-          whiteSpace: "nowrap",
-        }}
-      >
-        ● CONFIRMED
-      </span>
-    );
-  }
+const CONFIDENCE_STYLE: Record
+  LeakConfidence,
+  { bg: string; border: string; color: string; label: string }
+> = {
+  "Confirmed":       { bg: "#0D2B1A", border: "#00C896", color: "#00C896", label: "\u25CF CONFIRMED" },
+  "High Confidence": { bg: "#0D2230", border: "#38BDF8", color: "#38BDF8", label: "\u25CF HIGH CONFIDENCE" },
+  "Estimated":       { bg: "#2B260D", border: "#D4B106", color: "#D4B106", label: "\u25CF ESTIMATED" },
+  "Suggested":       { bg: "#1C2D24", border: "#4A6A58", color: "#8FAF9C", label: "\u25CF EARLY SIGNAL" },
+  "Flagged":         { bg: "#2B160D", border: "#F97316", color: "#F97316", label: "\u25CF FLAGGED" },
+};
+
+function ConfidencePill({ confidence }: { confidence: LeakConfidence }) {
+  const s = CONFIDENCE_STYLE[confidence] ?? CONFIDENCE_STYLE["Estimated"];
   return (
     <span
       style={{
-        background: "#2B260D",
-        border: "1px solid #D4B106",
-        color: "#D4B106",
+        background: s.bg,
+        border: `1px solid ${s.border}`,
+        color: s.color,
         fontSize: 10,
         fontWeight: 700,
         padding: "3px 8px",
@@ -60,7 +57,7 @@ function ConfidencePill({ confidence }: { confidence: "Confirmed" | "Estimated" 
         whiteSpace: "nowrap",
       }}
     >
-      ● ESTIMATED
+      {s.label}
     </span>
   );
 }
