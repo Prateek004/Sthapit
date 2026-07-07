@@ -60,6 +60,9 @@ export interface StockSettings {
   activeTab?: string;
   /** true = prices already include GST (MRP-inclusive); false = GST is added on top */
   gstInclusive?: boolean;
+  /** P1 GUARDRAIL: max discount as % of subtotal. 0/undefined = off.
+   *  Cashiers are hard-blocked above this; owners get a warning but may proceed. */
+  maxDiscountPercent?: number;
 }
 
 export interface UserSession {
