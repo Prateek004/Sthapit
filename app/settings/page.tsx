@@ -35,6 +35,7 @@ export default function SettingsPage() {
   const [barEnabled, setBarEnabled] = useState(ss.barEnabled);
   const [tableCount, setTableCount] = useState(ss.tableCount);
   const [openTableBilling, setOpenTableBilling] = useState(ss.openTableBilling ?? false);
+  const [maxDiscount, setMaxDiscount] = useState(ss.maxDiscountPercent ?? 0);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -49,13 +50,14 @@ export default function SettingsPage() {
       setTableCount(s.tableCount);
       setOpenTableBilling(s.openTableBilling ?? false);
       setGstInclusive(s.gstInclusive ?? false); // P1-06
+      setMaxDiscount(s.maxDiscountPercent ?? 0);
     }
   }, [session?.businessId]);
 
   const handleSave = async () => {
     if (!session) return;
     setSaving(true);
-    const stockSettings: StockSettings = { tablesEnabled, kotEnabled, barEnabled, tableCount, openTableBilling, gstInclusive };
+    const stockSettings: StockSettings = { tablesEnabled, kotEnabled, barEnabled, tableCount, openTableBilling, gstInclusive, maxDiscountPercent: maxDiscount };
     const updated = { ...session, gstPercent: gst, upiId: upiId.trim() || undefined, stockSettings };
     setSession(updated);
     if (isSupabaseEnabled()) {
@@ -212,6 +214,45 @@ export default function SettingsPage() {
                 onBlur={(e) => (e.target.style.borderColor = "rgba(28,20,16,0.1)")}
               />
             </div>
+
+            {/* P1 GUARDRAIL: max discount % — owner only */}
+            {isOwner && (
+              <div style={{ padding: "16px 20px", borderTop: "0.5px solid rgba(28,20,16,0.06)" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                  <div style={{ width: 32, height: 32, borderRadius: 8, background: "#FDEEEE", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <ShieldAlert size={15} color="#C0392B" />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: "#1C1410" }}>Discount Guardrail</div>
+                    <div style={{ fontSize: 11, color: "#9C8E87" }}>
+                      Cashiers are blocked above this % of the bill. You get a warning but can proceed.
+                    </div>
+                  </div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 8 }}>
+                  {[0, 5, 10, 15, 20, 25].map((pct) => (
+                    <button
+                      key={pct}
+                      onClick={() => setMaxDiscount(pct)}
+                      style={{
+                        height: 44, borderRadius: 10,
+                        border: `1.5px solid ${maxDiscount === pct ? "#C0392B" : "rgba(28,20,16,0.1)"}`,
+                        background: maxDiscount === pct ? "#FDEEEE" : "white",
+                        color: maxDiscount === pct ? "#C0392B" : "#5C4E47",
+                        fontWeight: 700, fontSize: 13, cursor: "pointer", transition: "all 0.15s",
+                      }}
+                    >
+                      {pct === 0 ? "Off" : `${pct}%`}
+                    </button>
+                  ))}
+                </div>
+                {maxDiscount > 0 && (
+                  <div style={{ fontSize: 11, color: "#9C8E87", marginTop: 10 }}>
+                    Any bill discounted more than {maxDiscount}% of subtotal will be blocked for cashiers at checkout.
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* ── POS Features ── */}
