@@ -148,6 +148,15 @@ export default function CartPanel({ onClose }: Props) {
   const itemCount = cart.reduce((s, i) => s + i.qty, 0);
   const discountCapped = discountPaise >= subtotalPaise && discountValue > 0;
 
+  // P1 GUARDRAIL: owner-set max discount as % of subtotal (Settings → Billing).
+  // Cashiers are hard-blocked above the limit; owners get a warning but can proceed.
+  const maxDiscountPercent = session?.stockSettings?.maxDiscountPercent ?? 0;
+  const discountPctOfSubtotal =
+    subtotalPaise > 0 ? (discountPaise / subtotalPaise) * 100 : 0;
+  const overGuardrail =
+    maxDiscountPercent > 0 && discountPctOfSubtotal > maxDiscountPercent;
+  const guardrailBlocked = overGuardrail && session?.role === "cashier";
+
   // ── Clear cart with confirmation dialog ──────────────────────────────────
   const handleClearAll = useCallback(() => {
     if (cart.length === 0) return;
@@ -444,6 +453,17 @@ export default function CartPanel({ onClose }: Props) {
                 Discount capped at subtotal
               </p>
             )}
+            {overGuardrail && (
+              <p
+                className={`text-xs font-semibold -mt-1 ${
+                  guardrailBlocked ? "text-red-600" : "text-amber-600"
+                }`}
+              >
+                {guardrailBlocked
+                  ? `Blocked: discount is ${Math.round(discountPctOfSubtotal)}% — owner limit is ${maxDiscountPercent}%. Reduce it or ask the owner.`
+                  : `Heads up: discount is ${Math.round(discountPctOfSubtotal)}% — above your ${maxDiscountPercent}% guardrail.`}
+              </p>
+            )}
 
             {/* Totals */}
             <div className="space-y-1 text-sm">
@@ -508,12 +528,27 @@ export default function CartPanel({ onClose }: Props) {
               </button>
             )}
 
-            {/* Checkout */}
+            {/* Checkout — hard-blocked for cashiers over the discount guardrail */}
             <button
-              onClick={() => setShowCheckout(true)}
-              className="w-full h-12 bg-primary-500 text-white rounded-2xl font-bold press shadow-md"
+              onClick={() => {
+                if (guardrailBlocked) {
+                  showToast(
+                    `Discount above the ${maxDiscountPercent}% limit — reduce it or ask the owner`,
+                    "error"
+                  );
+                  return;
+                }
+                setShowCheckout(true);
+              }}
+              className={`w-full h-12 rounded-2xl font-bold press shadow-md ${
+                guardrailBlocked
+                  ? "bg-gray-300 text-gray-500"
+                  : "bg-primary-500 text-white"
+              }`}
             >
-              Checkout · {fmtRupee(totalPaise)}
+              {guardrailBlocked
+                ? `Discount over ${maxDiscountPercent}% limit`
+                : `Checkout · ${fmtRupee(totalPaise)}`}
             </button>
           </div>
         )}
