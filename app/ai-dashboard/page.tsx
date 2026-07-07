@@ -8,21 +8,27 @@ import LeaksPanel from "@/components/ai/LeaksPanel";
 import InventoryTable from "@/components/ai/InventoryTable";
 import BillingTable from "@/components/ai/BillingTable";
 import { fmtRupee, todayStr } from "@/lib/utils";
-import { dbGetAllOrders, dbGetAllRawMaterials } from "@/lib/db";
-import { AlertTriangle, Leaf, ListChecks, MessageCircle } from "lucide-react";
-import type { Order, RawMaterial } from "@/lib/types";
+import { dbGetAllOrders, dbGetAllRawMaterials, dbGetAllMenuItems } from "@/lib/db";
+import MenuMatrix from "@/components/ai/MenuMatrix";
+import { AlertTriangle, Leaf, ListChecks, MessageCircle, LayoutGrid } from "lucide-react";
+import type { Order, RawMaterial, MenuItem } from "@/lib/types";
 
-type ModuleTab = "leaks" | "inventory" | "billing" | "chat";
+type ModuleTab = "leaks" | "menu" | "inventory" | "billing" | "chat";
 
 const MODULES: { id: ModuleTab; label: string; Icon: typeof AlertTriangle }[] = [
   { id: "leaks", label: "Profit Leaks", Icon: AlertTriangle },
+  { id: "menu", label: "Menu Matrix", Icon: LayoutGrid },
   { id: "inventory", label: "Inventory", Icon: Leaf },
   { id: "billing", label: "Billing", Icon: ListChecks },
 ];
 
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+
 export default function AiDashboardPage() {
   const { state } = useApp();
   const [allOrders, setAllOrders] = useState<Order[]>([]);
+  const [recentOrders, setRecentOrders] = useState<Order[]>([]);
+  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([]);
   const [leaks, setLeaks] = useState<Leak[]>([]);
   const [loading, setLoading] = useState(true);
@@ -32,18 +38,25 @@ export default function AiDashboardPage() {
     let cancelled = false;
     async function load() {
       const uid = state.session?.businessId ?? "default";
-      const [orders, materials] = await Promise.all([
+      const [orders, materials, menu] = await Promise.all([
         dbGetAllOrders(uid),
         dbGetAllRawMaterials(uid),
+        dbGetAllMenuItems(uid),
       ]);
       if (cancelled) return;
       const today = todayStr();
       const todayOrders = orders.filter(
         (o) => o.createdAt.startsWith(today) && o.status !== "voided"
       );
+      const cutoff = Date.now() - THIRTY_DAYS_MS;
+      const recent = orders.filter(
+        (o) => o.status !== "voided" && Date.parse(o.createdAt) >= cutoff
+      );
       setAllOrders(todayOrders);
+      setRecentOrders(recent);
+      setMenuItems(menu);
       setRawMaterials(materials);
-      setLeaks(detectLeaks(orders, materials));
+      setLeaks(detectLeaks(orders, materials, menu));
       setLoading(false);
     }
     load();
@@ -58,8 +71,34 @@ export default function AiDashboardPage() {
   const confirmedLeaks = leaks.filter((l) => l.confidence === "Confirmed");
   const avgTicketPaise =
     allOrders.length > 0 ? Math.round(totalRevenuePaise / allOrders.length) : 0;
-  const dataConfidence =
-    leaks.length > 0 ? Math.round((confirmedLeaks.length / leaks.length) * 100) : 78;
+
+  // Real gross margin from today's orders, computed only over items that have
+  // cost-price data. Never shows a made-up number — "\u2014" until costs exist.
+  const costById = new Map(
+    menuItems
+      .filter((m) => (m.costPricePaise ?? 0) > 0)
+      .map((m) => [m.id, m.costPricePaise as number])
+  );
+  let marginRevenuePaise = 0;
+  let marginCostPaise = 0;
+  let coveredUnits = 0;
+  let totalUnits = 0;
+  for (const o of allOrders) {
+    for (const it of o.items) {
+      totalUnits += it.qty;
+      const cost = costById.get(it.menuItemId);
+      if (cost === undefined) continue;
+      coveredUnits += it.qty;
+      marginRevenuePaise += it.unitPricePaise * it.qty;
+      marginCostPaise += cost * it.qty;
+    }
+  }
+  const grossMarginPct =
+    marginRevenuePaise > 0
+      ? Math.round(((marginRevenuePaise - marginCostPaise) / marginRevenuePaise) * 100)
+      : null;
+  const costCoveragePct =
+    totalUnits > 0 ? Math.round((coveredUnits / totalUnits) * 100) : 0;
   const lowStockItems = rawMaterials.filter(
     (r) => (r.minStock ?? 0) > 0 && r.currentStock <= (r.minStock ?? 0) * 1.5
   );
@@ -290,13 +329,15 @@ export default function AiDashboardPage() {
                 }}
               >
                 <div style={{ fontSize: 10, color: "#4A6A58", textTransform: "uppercase", letterSpacing: "0.1em" }}>
-                  DATA CONFIDENCE
+                  GROSS MARGIN
                 </div>
                 <div style={{ fontFamily: "'Syne', sans-serif", fontWeight: 700, fontSize: 28, color: "#00C896", marginTop: 6 }}>
-                  {dataConfidence}%
+                  {grossMarginPct === null ? "\u2014" : `${grossMarginPct}%`}
                 </div>
                 <div style={{ fontSize: 11, color: "#4A6A58", marginTop: 4 }}>
-                  {leaks.length} signals
+                  {grossMarginPct === null
+                    ? "add cost prices in Menu"
+                    : `based on ${costCoveragePct}% of items sold`}
                 </div>
               </div>
 
@@ -322,6 +363,9 @@ export default function AiDashboardPage() {
 
             {/* ACTIVE MODULE CONTENT */}
             {activeModule === "leaks" && <LeaksPanel leaks={leaks} businessId={businessId} />}
+            {activeModule === "menu" && (
+              <MenuMatrix orders={recentOrders} menuItems={menuItems} />
+            )}
             {activeModule === "inventory" && <InventoryTable items={lowStockItems} />}
             {activeModule === "billing" && <BillingTable orders={allOrders} leaks={leaks} />}
             {activeModule === "chat" && (
