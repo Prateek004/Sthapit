@@ -10,7 +10,8 @@ import BillingTable from "@/components/ai/BillingTable";
 import { fmtRupee, todayStr } from "@/lib/utils";
 import { dbGetAllOrders, dbGetAllRawMaterials, dbGetAllMenuItems } from "@/lib/db";
 import MenuMatrix from "@/components/ai/MenuMatrix";
-import { AlertTriangle, Leaf, ListChecks, MessageCircle, LayoutGrid } from "lucide-react";
+import { buildDaySummaryText, shareDaySummaryOnWhatsApp } from "@/components/ai/daySummary";
+import { AlertTriangle, Leaf, ListChecks, MessageCircle, LayoutGrid, Share2 } from "lucide-react";
 import type { Order, RawMaterial, MenuItem } from "@/lib/types";
 
 type ModuleTab = "leaks" | "menu" | "inventory" | "billing" | "chat";
@@ -28,6 +29,7 @@ export default function AiDashboardPage() {
   const { state } = useApp();
   const [allOrders, setAllOrders] = useState<Order[]>([]);
   const [recentOrders, setRecentOrders] = useState<Order[]>([]);
+  const [todayVoided, setTodayVoided] = useState<Order[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([]);
   const [leaks, setLeaks] = useState<Leak[]>([]);
@@ -48,11 +50,15 @@ export default function AiDashboardPage() {
       const todayOrders = orders.filter(
         (o) => o.createdAt.startsWith(today) && o.status !== "voided"
       );
+      const todayVoids = orders.filter(
+        (o) => o.createdAt.startsWith(today) && o.status === "voided"
+      );
       const cutoff = Date.now() - THIRTY_DAYS_MS;
       const recent = orders.filter(
         (o) => o.status !== "voided" && Date.parse(o.createdAt) >= cutoff
       );
       setAllOrders(todayOrders);
+      setTodayVoided(todayVoids);
       setRecentOrders(recent);
       setMenuItems(menu);
       setRawMaterials(materials);
@@ -103,6 +109,19 @@ export default function AiDashboardPage() {
     (r) => (r.minStock ?? 0) > 0 && r.currentStock <= (r.minStock ?? 0) * 1.5
   );
 
+  // F4 v1 (manual): compose today's summary from real data and share via WhatsApp.
+  const handleShareSummary = () => {
+    const text = buildDaySummaryText({
+      businessName: state.session?.businessName ?? "My Business",
+      orders: allOrders,
+      voidedCount: todayVoided.length,
+      voidedPaise: todayVoided.reduce((s, o) => s + o.totalPaise, 0),
+      leaks,
+      grossMarginPct,
+    });
+    shareDaySummaryOnWhatsApp(text);
+  };
+
   if (loading) {
     return (
       <AppShell>
@@ -149,7 +168,7 @@ export default function AiDashboardPage() {
             }}
           >
             <div style={{ padding: "0 20px 12px", fontSize: 10, color: "#4A6A58", textTransform: "uppercase", letterSpacing: "0.12em" }}>
-              // MODULES
+              {"// MODULES"}
             </div>
             {MODULES.map(({ id, label, Icon }) => {
               const active = activeModule === id;
@@ -238,11 +257,34 @@ export default function AiDashboardPage() {
                   PROFIT CONTROL · LIVE
                 </div>
               </div>
-              <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize: 16, color: "white" }}>
-                  {state.session?.businessName ?? ""}
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontSize: 16, color: "white" }}>
+                    {state.session?.businessName ?? ""}
+                  </div>
+                  <div style={{ fontSize: 12, color: "#4A6A58" }}>Karol Bagh, Delhi · North Indian</div>
                 </div>
-                <div style={{ fontSize: 12, color: "#4A6A58" }}>Karol Bagh, Delhi · North Indian</div>
+                <button
+                  onClick={handleShareSummary}
+                  title="Share today's summary on WhatsApp"
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    background: "#0D2B1A",
+                    border: "1px solid #00C896",
+                    color: "#00C896",
+                    fontWeight: 700,
+                    fontSize: 12,
+                    padding: "10px 14px",
+                    borderRadius: 10,
+                    cursor: "pointer",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  <Share2 size={14} />
+                  WhatsApp Summary
+                </button>
               </div>
             </div>
 
