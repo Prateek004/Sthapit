@@ -453,6 +453,7 @@ function TableCartPanel({
   onDiscountTypeChange,
 }: CartPanelProps) {
   const { updateItemQty, removeItem, setDiscount } = useTableStore();
+  const { state: guardState, showToast: guardToast } = useApp();
   const order = useTableOrder(tableId);
   const [discountType, setDiscountType] = useState<"flat" | "percent">("flat");
   const [discountInput, setDiscountInput] = useState("");
@@ -498,6 +499,13 @@ function TableCartPanel({
   }
 
   const discountCapped = discountPaise >= subtotalPaise && (parseFloat(discountInput) || 0) > 0;
+
+  // P1 GUARDRAIL: owner-set max discount as % of subtotal (Settings -> Billing).
+  // Cashiers are hard-blocked above the limit; owners get a warning but can proceed.
+  const maxDiscountPercent = guardState.session?.stockSettings?.maxDiscountPercent ?? 0;
+  const discountPctOfSubtotal = subtotalPaise > 0 ? (discountPaise / subtotalPaise) * 100 : 0;
+  const overGuardrail = maxDiscountPercent > 0 && discountPctOfSubtotal > maxDiscountPercent;
+  const guardrailBlocked = overGuardrail && guardState.session?.role === "cashier";
 
   return (
     <div className="flex flex-col h-full overflow-hidden" style={{ background: "white" }}>
@@ -639,6 +647,16 @@ function TableCartPanel({
             onChange={(e) => setDiscountInput(e.target.value)}
           />
         </div>
+        {overGuardrail && (
+          <p
+            className="text-xs font-semibold -mt-1"
+            style={{ color: guardrailBlocked ? "#DC2626" : "#B07D00" }}
+          >
+            {guardrailBlocked
+              ? `Blocked: discount is ${Math.round(discountPctOfSubtotal)}% — owner limit is ${maxDiscountPercent}%. Reduce it or ask the owner.`
+              : `Heads up: discount is ${Math.round(discountPctOfSubtotal)}% — above your ${maxDiscountPercent}% guardrail.`}
+          </p>
+        )}
 
         {/* Totals */}
         <div className="space-y-1 text-sm">
@@ -682,13 +700,27 @@ function TableCartPanel({
           {holding ? "Saving…" : "Hold Order"}
         </button>
 
-        {/* Checkout */}
+        {/* Checkout — hard-blocked for cashiers over the discount guardrail */}
         <button
-          onClick={onCheckout}
+          onClick={() => {
+            if (guardrailBlocked) {
+              guardToast(
+                `Discount above the ${maxDiscountPercent}% limit — reduce it or ask the owner`,
+                "error"
+              );
+              return;
+            }
+            onCheckout();
+          }}
           className="w-full h-12 rounded-2xl font-bold press shadow-md flex items-center justify-center gap-2"
-          style={{ background: "#E8590C", color: "white" }}
+          style={{
+            background: guardrailBlocked ? "#D1D5DB" : "#E8590C",
+            color: guardrailBlocked ? "#6B7280" : "white",
+          }}
         >
-          Checkout · {fmtRupee(totalPaise)}
+          {guardrailBlocked
+            ? `Discount over ${maxDiscountPercent}% limit`
+            : `Checkout · ${fmtRupee(totalPaise)}`}
         </button>
       </div>
     </div>
@@ -729,7 +761,7 @@ function CheckoutSheet({
   checkoutDiscountType,
   checkoutDiscountPercent,
 }: CheckoutSheetProps) {
-  const { state: appState, notifyOrderPlaced } = useApp();
+  const { state: appState, notifyOrderPlaced, showToast } = useApp();
   const { clearOrder } = useTableStore();
   const order = useTableOrder(tableId);
 
@@ -801,6 +833,27 @@ function CheckoutSheet({
       // P0-08: use locked GST rate from when table was opened
       const lockedGst = billing.gstPercentAtOpen ?? gstPercent;
 
+      // P1 GUARDRAIL (defense-in-depth): re-validate against FRESH IDB values at
+      // close time, so a cashier can never settle an over-limit discount even if
+      // the discount was changed on another device after the sheet opened.
+      const maxDisc = appState.session?.stockSettings?.maxDiscountPercent ?? 0;
+      if (
+        maxDisc > 0 &&
+        appState.session?.role === "cashier" &&
+        freshSubtotal > 0 &&
+        (freshDiscount / freshSubtotal) * 100 > maxDisc
+      ) {
+        // Must release the double-tap guard before returning — this function has
+        // no finally block; only the catch path resets these.
+        placingRef.current = false;
+        setPlacing(false);
+        showToast(
+          `Discount above the ${maxDisc}% limit — reduce it or ask the owner`,
+          "error"
+        );
+        return;
+      }
+
       let billNumber = generateBillNumber();
       try {
         const { getNextBillCounterFromSupabase } = await import("@/lib/supabase/sync");
@@ -844,6 +897,8 @@ function CheckoutSheet({
         createdAt: new Date().toISOString(),
         syncStatus: "pending",
         status: "completed",
+        placedByUsername: appState.session?.username,
+        placedByRole: appState.session?.role,
       };
 
       const { dbSaveOrder } = await import("@/lib/db");
