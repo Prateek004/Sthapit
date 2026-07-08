@@ -8,7 +8,8 @@ import LeaksPanel from "@/components/ai/LeaksPanel";
 import InventoryTable from "@/components/ai/InventoryTable";
 import BillingTable from "@/components/ai/BillingTable";
 import { fmtRupee, todayStr } from "@/lib/utils";
-import { dbGetAllOrders, dbGetAllRawMaterials, dbGetAllMenuItems } from "@/lib/db";
+import { dbGetAllOrders, dbGetAllRawMaterials, dbGetAllMenuItems, dbGetWastage } from "@/lib/db";
+import { useRouter } from "next/navigation";
 import MenuMatrix from "@/components/ai/MenuMatrix";
 import { buildDaySummaryText, shareDaySummaryOnWhatsApp } from "@/components/ai/daySummary";
 import { AlertTriangle, Leaf, ListChecks, MessageCircle, LayoutGrid, Share2 } from "lucide-react";
@@ -27,6 +28,7 @@ const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
 export default function AiDashboardPage() {
   const { state } = useApp();
+  const router = useRouter();
   const [allOrders, setAllOrders] = useState<Order[]>([]);
   const [recentOrders, setRecentOrders] = useState<Order[]>([]);
   const [todayVoided, setTodayVoided] = useState<Order[]>([]);
@@ -40,10 +42,12 @@ export default function AiDashboardPage() {
     let cancelled = false;
     async function load() {
       const uid = state.session?.businessId ?? "default";
-      const [orders, materials, menu] = await Promise.all([
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      const [orders, materials, menu, waste] = await Promise.all([
         dbGetAllOrders(uid),
         dbGetAllRawMaterials(uid),
         dbGetAllMenuItems(uid),
+        dbGetWastage(uid, sevenDaysAgo),
       ]);
       if (cancelled) return;
       const today = todayStr();
@@ -62,7 +66,7 @@ export default function AiDashboardPage() {
       setRecentOrders(recent);
       setMenuItems(menu);
       setRawMaterials(materials);
-      setLeaks(detectLeaks(orders, materials, menu));
+      setLeaks(detectLeaks(orders, materials, menu, waste));
       setLoading(false);
     }
     load();
@@ -168,7 +172,7 @@ export default function AiDashboardPage() {
             }}
           >
             <div style={{ padding: "0 20px 12px", fontSize: 10, color: "#4A6A58", textTransform: "uppercase", letterSpacing: "0.12em" }}>
-              {"// MODULES"}
+              // MODULES
             </div>
             {MODULES.map(({ id, label, Icon }) => {
               const active = activeModule === id;
@@ -408,7 +412,30 @@ export default function AiDashboardPage() {
             {activeModule === "menu" && (
               <MenuMatrix orders={recentOrders} menuItems={menuItems} />
             )}
-            {activeModule === "inventory" && <InventoryTable items={lowStockItems} />}
+            {activeModule === "inventory" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                <button
+                  onClick={() => router.push("/wastage")}
+                  style={{
+                    alignSelf: "flex-start",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    background: "#0D2B1A",
+                    border: "1px solid #00C896",
+                    color: "#00C896",
+                    fontWeight: 700,
+                    fontSize: 12,
+                    padding: "10px 14px",
+                    borderRadius: 10,
+                    cursor: "pointer",
+                  }}
+                >
+                  + Log Wastage
+                </button>
+                <InventoryTable items={lowStockItems} />
+              </div>
+            )}
             {activeModule === "billing" && <BillingTable orders={allOrders} leaks={leaks} />}
             {activeModule === "chat" && (
               <div className="lg:hidden" style={{ height: 500, overflow: "hidden", borderRadius: 12 }}>
