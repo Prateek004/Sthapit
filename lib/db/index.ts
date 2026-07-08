@@ -7,6 +7,7 @@ import type {
   FinishedGood,
   OpenTable,
   TableOrder,
+  WastageEntry,
   PersistedCart,
   LeakAction,
 } from "@/lib/types";
@@ -116,6 +117,7 @@ class Sth1rDB extends Dexie {
   tableOrders!:   Table<WithUid<TableOrder>,   string>;
   carts!:         Table<PersistedCart,         string>;
   leakActions!:   Table<WithUid<LeakAction>,   string>;
+  wastage!:       Table<WithUid<WastageEntry>, string>;
 
   constructor() {
     super("sth1r_db");
@@ -175,6 +177,21 @@ class Sth1rDB extends Dexie {
       tableOrders:   "id, _uid, tableId, status, syncStatus, updatedAt",
       carts:         "id",
       leakActions:   "id, _uid",
+    });
+    // Version 6: wastage store for G4 Wastage Tracker.
+    // Purely additive: existing stores are unchanged, no data migration runs.
+    this.version(6).stores({
+      orders:        "id, _uid, createdAt, syncStatus, status",
+      menuItems:     "id, _uid, categoryId",
+      categories:    "id, _uid, sortOrder",
+      rawMaterials:  "id, _uid, name",
+      finishedGoods: "id, _uid, name, expiryDate",
+      barItems:      "id, _uid, name, expiryDate",
+      openTables:    "id, _uid, tableNumber",
+      tableOrders:   "id, _uid, tableId, status, syncStatus, updatedAt",
+      carts:         "id",
+      leakActions:   "id, _uid",
+      wastage:       "id, _uid, createdAt",
     });
   }
 }
@@ -667,6 +684,44 @@ export async function dbClearLeakAction(uid: string, leakActionId: string): Prom
     const db = await getDB();
     const rec = await db.leakActions.get(leakActionId);
     if (rec && rec._uid === uid) await db.leakActions.delete(leakActionId);
+  } catch (err) {
+    recordIdbError();
+    throw err;
+  }
+}
+
+// ── Wastage Tracker (G4) ──────────────────────────────────────────────────────
+export async function dbAddWastage(uid: string, entry: WastageEntry): Promise<void> {
+  try {
+    const db = await getDB();
+    await db.wastage.put({ ...entry, _uid: uid });
+  } catch (err) {
+    recordIdbError();
+    throw err;
+  }
+}
+
+/** Returns entries newest-first. Pass sinceIso to limit the window. */
+export async function dbGetWastage(uid: string, sinceIso?: string): Promise<WastageEntry[]> {
+  try {
+    const db = await getDB();
+    let rows = (await db.wastage
+      .where("_uid")
+      .equals(uid)
+      .toArray()) as unknown as WastageEntry[];
+    if (sinceIso) rows = rows.filter((r) => r.createdAt >= sinceIso);
+    return rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  } catch {
+    recordIdbError();
+    return [];
+  }
+}
+
+export async function dbDeleteWastage(uid: string, entryId: string): Promise<void> {
+  try {
+    const db = await getDB();
+    const rec = await db.wastage.get(entryId);
+    if (rec && rec._uid === uid) await db.wastage.delete(entryId);
   } catch (err) {
     recordIdbError();
     throw err;
