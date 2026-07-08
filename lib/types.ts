@@ -227,6 +227,10 @@ export interface Order {
   status?: OrderStatus;
   voidedAt?: string;
   voidReason?: string;
+  /** Attribution (Sprint B): who placed this order. Only present on orders
+   *  created after this field shipped — never backfilled or guessed. */
+  placedByUsername?: string;
+  placedByRole?: UserRole;
 }
 
 /** Legacy open table — kept for backward compat with existing Dexie store */
