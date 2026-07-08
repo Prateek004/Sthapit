@@ -151,6 +151,27 @@ export interface LeakAction {
 }
 
 
+/** G4 Wastage Tracker: one logged waste event. 3-tap entry, never mandatory.
+ *  valuePaise is computed from known cost data when available, else owner-entered. */
+export type WastageReason = "spoiled" | "overcooked" | "returned" | "prep_waste" | "other";
+
+export interface WastageEntry {
+  id: string;
+  /** Display name of what was wasted */
+  itemName: string;
+  /** Set when the wasted item is a menu item */
+  menuItemId?: string;
+  /** Set when the wasted item is a raw material */
+  rawMaterialId?: string;
+  qty: number;
+  /** Unit label for raw materials (kg, L, pcs); menu items are counted in plates */
+  unit?: string;
+  /** Rupee value lost, integer paise */
+  valuePaise: number;
+  reason: WastageReason;
+  createdAt: string;
+}
+
 export interface FinishedGood {
   id: string;
   name: string;
