@@ -1,4 +1,4 @@
-import { Order, RawMaterial, MenuItem } from "@/lib/types";
+import { Order, RawMaterial, MenuItem, WastageEntry } from "@/lib/types";
 
 /**
  * STHAPPIT Confidence Framework — 5 levels (Section E of strategy doc).
@@ -25,7 +25,8 @@ export interface Leak {
     | "low_stock"
     | "high_void_rate"
     | "menu_margin"
-    | "silent_item";
+    | "silent_item"
+    | "food_waste";
   title: string;
   why: string;
   nextAction: string;
@@ -53,7 +54,8 @@ function withinDays(iso: string, days: number): boolean {
 export function detectLeaks(
   orders: Order[],
   rawMaterials: RawMaterial[],
-  menuItems?: MenuItem[]
+  menuItems?: MenuItem[],
+  wastage?: WastageEntry[]
 ): Leak[] {
   const leaks: Leak[] = [];
 
@@ -242,6 +244,39 @@ export function detectLeaks(
           billIds: [],
         });
       }
+    }
+  }
+
+  // RULE 8 — food_waste: owner-logged waste (G4 tracker). Hard data → Confirmed.
+  if (wastage && wastage.length > 0) {
+    const recent = wastage.filter((w) => withinDays(w.createdAt, 7));
+    const totalWastePaise = recent.reduce((s, w) => s + w.valuePaise, 0);
+    if (recent.length > 0 && totalWastePaise > 0) {
+      const byReason = new Map<string, number>();
+      for (const w of recent) {
+        byReason.set(w.reason, (byReason.get(w.reason) ?? 0) + w.valuePaise);
+      }
+      const topReason = Array.from(byReason.entries()).sort((a, b) => b[1] - a[1])[0];
+      const reasonLabel: Record<string, string> = {
+        spoiled: "spoilage",
+        overcooked: "overcooking",
+        returned: "customer returns",
+        prep_waste: "prep waste",
+        other: "other causes",
+      };
+      leaks.push({
+        id: "food_waste",
+        type: "food_waste",
+        title: "Logged food waste this week",
+        why: `${recent.length} waste entries in 7 days; biggest cause: ${
+          reasonLabel[topReason[0]] ?? topReason[0]
+        }`,
+        nextAction:
+          "Open the Wastage log. Adjust prep quantities or storage for the top-wasted items.",
+        impactPaise: totalWastePaise,
+        confidence: "Confirmed",
+        billIds: [],
+      });
     }
   }
 
