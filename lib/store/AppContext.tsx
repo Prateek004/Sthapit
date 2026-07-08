@@ -1087,6 +1087,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
           createdAt: new Date().toISOString(),
           syncStatus: "pending",
           status: "completed",
+          placedByUsername: state.session?.username,
+          placedByRole: state.session?.role,
         };
 
         const db = await import("@/lib/db");
@@ -1315,6 +1317,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
           createdAt: new Date().toISOString(),
           syncStatus: "pending",
           status: "completed",
+          placedByUsername: state.session?.username,
+          placedByRole: state.session?.role,
         };
 
         const db = await import("@/lib/db");
