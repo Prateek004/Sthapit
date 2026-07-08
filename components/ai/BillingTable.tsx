@@ -18,6 +18,7 @@ const FLAG_LABELS: Record<Leak["type"], string> = {
   high_void_rate: "Voided — part of high void-rate signal",
   menu_margin: "Contains item(s) selling below 30% margin",
   silent_item: "Silent menu item signal",
+  food_waste: "Logged food waste signal",
 };
 
 function channelLabel(order: Order): string {
