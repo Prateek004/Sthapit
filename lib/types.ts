@@ -151,6 +151,23 @@ export interface LeakAction {
 }
 
 
+/** G2 Recipe/BOM: how much of each raw material one unit (plate) of a menu
+ *  item consumes. Approximate values are fine — the consumption engine labels
+ *  its outputs as theoretical. Recipe.id === menuItemId (one recipe per item). */
+export interface RecipeIngredient {
+  rawMaterialId: string;
+  /** Quantity of the raw material consumed per ONE unit sold, in the raw
+   *  material's own unit (kg, L, pcs …). */
+  qtyPerUnit: number;
+}
+
+export interface Recipe {
+  /** Same as the menu item id */
+  id: string;
+  ingredients: RecipeIngredient[];
+  updatedAt: string;
+}
+
 /** G4 Wastage Tracker: one logged waste event. 3-tap entry, never mandatory.
  *  valuePaise is computed from known cost data when available, else owner-entered. */
 export type WastageReason = "spoiled" | "overcooked" | "returned" | "prep_waste" | "other";
@@ -184,6 +201,41 @@ export interface FinishedGood {
   updatedAt: string;
   isInBilling?: boolean;
   billingMenuItemId?: string;
+}
+
+/** G2: one recipe per menu item — how much of each raw material one plate uses. */
+export interface RecipeIngredient {
+  rawMaterialId: string;
+  /** Quantity used per ONE unit sold, in the raw material's own unit (kg, L, pcs) */
+  qtyPerUnit: number;
+}
+
+export interface Recipe {
+  /** id === menuItemId, so saving is an idempotent upsert */
+  id: string;
+  menuItemId: string;
+  ingredients: RecipeIngredient[];
+  updatedAt: string;
+}
+
+/** G1: a recorded vendor purchase — from OCR scan or manual entry. */
+export interface PurchaseLineItem {
+  name: string;
+  qty: number;
+  unit?: string;
+  unitPricePaise: number;
+  totalPaise: number;
+}
+
+export interface PurchaseRecord {
+  id: string;
+  vendorName?: string;
+  /** yyyy-mm-dd when known from the bill */
+  billDate?: string;
+  items: PurchaseLineItem[];
+  totalPaise: number;
+  source: "ocr" | "manual";
+  createdAt: string;
 }
 
 export interface CartItem {
