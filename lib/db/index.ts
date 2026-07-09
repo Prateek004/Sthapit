@@ -8,6 +8,8 @@ import type {
   OpenTable,
   TableOrder,
   WastageEntry,
+  Recipe,
+  PurchaseRecord,
   PersistedCart,
   LeakAction,
 } from "@/lib/types";
@@ -118,6 +120,8 @@ class Sth1rDB extends Dexie {
   carts!:         Table<PersistedCart,         string>;
   leakActions!:   Table<WithUid<LeakAction>,   string>;
   wastage!:       Table<WithUid<WastageEntry>, string>;
+  recipes!:       Table<WithUid<Recipe>, string>;
+  purchases!:     Table<WithUid<PurchaseRecord>, string>;
 
   constructor() {
     super("sth1r_db");
@@ -192,6 +196,22 @@ class Sth1rDB extends Dexie {
       carts:         "id",
       leakActions:   "id, _uid",
       wastage:       "id, _uid, createdAt",
+    });
+    // Version 7: recipes (G2) + purchases (G1). Purely additive.
+    this.version(7).stores({
+      orders:        "id, _uid, createdAt, syncStatus, status",
+      menuItems:     "id, _uid, categoryId",
+      categories:    "id, _uid, sortOrder",
+      rawMaterials:  "id, _uid, name",
+      finishedGoods: "id, _uid, name, expiryDate",
+      barItems:      "id, _uid, name, expiryDate",
+      openTables:    "id, _uid, tableNumber",
+      tableOrders:   "id, _uid, tableId, status, syncStatus, updatedAt",
+      carts:         "id",
+      leakActions:   "id, _uid",
+      wastage:       "id, _uid, createdAt",
+      recipes:       "id, _uid",
+      purchases:     "id, _uid, createdAt",
     });
   }
 }
@@ -722,6 +742,77 @@ export async function dbDeleteWastage(uid: string, entryId: string): Promise<voi
     const db = await getDB();
     const rec = await db.wastage.get(entryId);
     if (rec && rec._uid === uid) await db.wastage.delete(entryId);
+  } catch (err) {
+    recordIdbError();
+    throw err;
+  }
+}
+
+// ── Recipes (G2) ──────────────────────────────────────────────────────────────
+export async function dbSaveRecipe(uid: string, recipe: Recipe): Promise<void> {
+  try {
+    const db = await getDB();
+    await db.recipes.put({ ...recipe, _uid: uid });
+  } catch (err) {
+    recordIdbError();
+    throw err;
+  }
+}
+
+export async function dbGetAllRecipes(uid: string): Promise<Recipe[]> {
+  try {
+    const db = await getDB();
+    return (await db.recipes
+      .where("_uid")
+      .equals(uid)
+      .toArray()) as unknown as Recipe[];
+  } catch {
+    recordIdbError();
+    return [];
+  }
+}
+
+export async function dbDeleteRecipe(uid: string, recipeId: string): Promise<void> {
+  try {
+    const db = await getDB();
+    const rec = await db.recipes.get(recipeId);
+    if (rec && rec._uid === uid) await db.recipes.delete(recipeId);
+  } catch (err) {
+    recordIdbError();
+    throw err;
+  }
+}
+
+// ── Purchases (G1) ────────────────────────────────────────────────────────────
+export async function dbAddPurchase(uid: string, purchase: PurchaseRecord): Promise<void> {
+  try {
+    const db = await getDB();
+    await db.purchases.put({ ...purchase, _uid: uid });
+  } catch (err) {
+    recordIdbError();
+    throw err;
+  }
+}
+
+export async function dbGetPurchases(uid: string): Promise<PurchaseRecord[]> {
+  try {
+    const db = await getDB();
+    const rows = (await db.purchases
+      .where("_uid")
+      .equals(uid)
+      .toArray()) as unknown as PurchaseRecord[];
+    return rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  } catch {
+    recordIdbError();
+    return [];
+  }
+}
+
+export async function dbDeletePurchase(uid: string, purchaseId: string): Promise<void> {
+  try {
+    const db = await getDB();
+    const rec = await db.purchases.get(purchaseId);
+    if (rec && rec._uid === uid) await db.purchases.delete(purchaseId);
   } catch (err) {
     recordIdbError();
     throw err;
