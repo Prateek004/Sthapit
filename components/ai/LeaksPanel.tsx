@@ -30,7 +30,7 @@ function leakIcon(type: Leak["type"]) {
   }
 }
 
-const CONFIDENCE_STYLE: Record<
+const CONFIDENCE_STYLE: Record
   LeakConfidence,
   { bg: string; border: string; color: string; label: string }
 > = {
