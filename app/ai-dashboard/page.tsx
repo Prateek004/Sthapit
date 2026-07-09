@@ -11,15 +11,17 @@ import { fmtRupee, todayStr } from "@/lib/utils";
 import { dbGetAllOrders, dbGetAllRawMaterials, dbGetAllMenuItems, dbGetWastage } from "@/lib/db";
 import { useRouter } from "next/navigation";
 import MenuMatrix from "@/components/ai/MenuMatrix";
+import PrepHints from "@/components/ai/PrepHints";
 import { buildDaySummaryText, shareDaySummaryOnWhatsApp } from "@/components/ai/daySummary";
-import { AlertTriangle, Leaf, ListChecks, MessageCircle, LayoutGrid, Share2 } from "lucide-react";
+import { AlertTriangle, Leaf, ListChecks, MessageCircle, LayoutGrid, Share2, CalendarDays, Users } from "lucide-react";
 import type { Order, RawMaterial, MenuItem } from "@/lib/types";
 
-type ModuleTab = "leaks" | "menu" | "inventory" | "billing" | "chat";
+type ModuleTab = "leaks" | "menu" | "prep" | "inventory" | "billing" | "chat";
 
 const MODULES: { id: ModuleTab; label: string; Icon: typeof AlertTriangle }[] = [
   { id: "leaks", label: "Profit Leaks", Icon: AlertTriangle },
   { id: "menu", label: "Menu Matrix", Icon: LayoutGrid },
+  { id: "prep", label: "Prep Hints", Icon: CalendarDays },
   { id: "inventory", label: "Inventory", Icon: Leaf },
   { id: "billing", label: "Billing", Icon: ListChecks },
 ];
@@ -412,6 +414,7 @@ export default function AiDashboardPage() {
             {activeModule === "menu" && (
               <MenuMatrix orders={recentOrders} menuItems={menuItems} />
             )}
+            {activeModule === "prep" && <PrepHints orders={recentOrders} />}
             {activeModule === "inventory" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
                 <button
@@ -436,7 +439,50 @@ export default function AiDashboardPage() {
                 <InventoryTable items={lowStockItems} />
               </div>
             )}
-            {activeModule === "billing" && <BillingTable orders={allOrders} leaks={leaks} />}
+            {activeModule === "billing" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <button
+                    onClick={() => router.push("/reconcile")}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      background: "#0D2B1A",
+                      border: "1px solid #00C896",
+                      color: "#00C896",
+                      fontWeight: 700,
+                      fontSize: 12,
+                      padding: "10px 14px",
+                      borderRadius: 10,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Reconcile Swiggy/Zomato Settlement
+                  </button>
+                  <button
+                    onClick={() => router.push("/staff-performance")}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      background: "#0D2B1A",
+                      border: "1px solid #00C896",
+                      color: "#00C896",
+                      fontWeight: 700,
+                      fontSize: 12,
+                      padding: "10px 14px",
+                      borderRadius: 10,
+                      cursor: "pointer",
+                    }}
+                  >
+                    <Users size={14} />
+                    Staff Performance
+                  </button>
+                </div>
+                <BillingTable orders={allOrders} leaks={leaks} />
+              </div>
+            )}
             {activeModule === "chat" && (
               <div className="lg:hidden" style={{ height: 500, overflow: "hidden", borderRadius: 12 }}>
                 <SthappitChat
