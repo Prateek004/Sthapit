@@ -417,25 +417,34 @@ export default function AiDashboardPage() {
             {activeModule === "prep" && <PrepHints orders={recentOrders} />}
             {activeModule === "inventory" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                <button
-                  onClick={() => router.push("/wastage")}
-                  style={{
-                    alignSelf: "flex-start",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    background: "#0D2B1A",
-                    border: "1px solid #00C896",
-                    color: "#00C896",
-                    fontWeight: 700,
-                    fontSize: 12,
-                    padding: "10px 14px",
-                    borderRadius: 10,
-                    cursor: "pointer",
-                  }}
-                >
-                  + Log Wastage
-                </button>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  {[
+                    { label: "+ Log Wastage", path: "/wastage" },
+                    { label: "Scan Purchase Bill", path: "/purchase-scan" },
+                    { label: "Recipes", path: "/recipes" },
+                    { label: "Consumption & Reorder", path: "/consumption" },
+                  ].map(({ label, path }) => (
+                    <button
+                      key={path}
+                      onClick={() => router.push(path)}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        background: "#0D2B1A",
+                        border: "1px solid #00C896",
+                        color: "#00C896",
+                        fontWeight: 700,
+                        fontSize: 12,
+                        padding: "10px 14px",
+                        borderRadius: 10,
+                        cursor: "pointer",
+                      }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
                 <InventoryTable items={lowStockItems} />
               </div>
             )}
