@@ -30,10 +30,16 @@ function leakIcon(type: Leak["type"]) {
   }
 }
 
-const CONFIDENCE_STYLE: Record
-  LeakConfidence,
-  { bg: string; border: string; color: string; label: string }
-> = {
+interface ConfStyle {
+  bg: string;
+  border: string;
+  color: string;
+  label: string;
+}
+
+// Kept on one line deliberately: a line-ending "<" gets eaten by some
+// clipboard paths when pasting into the GitHub web editor.
+const CONFIDENCE_STYLE: Record<LeakConfidence, ConfStyle> = {
   "Confirmed":       { bg: "#0D2B1A", border: "#00C896", color: "#00C896", label: "\u25CF CONFIRMED" },
   "High Confidence": { bg: "#0D2230", border: "#38BDF8", color: "#38BDF8", label: "\u25CF HIGH CONFIDENCE" },
   "Estimated":       { bg: "#2B260D", border: "#D4B106", color: "#D4B106", label: "\u25CF ESTIMATED" },
