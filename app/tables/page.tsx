@@ -6,7 +6,7 @@ import { useApp } from "@/lib/store/AppContext";
 import { useAllTableOrders } from "@/lib/store/tableStore";
 import AppShell from "@/components/ui/AppShell";
 import { fmtRupee } from "@/lib/utils";
-import { LayoutGrid, Clock } from "lucide-react";
+import { LayoutGrid, Clock, ClipboardList } from "lucide-react";
 
 // ── Elapsed time helpers ──────────────────────────────────────────────────────
 
@@ -33,6 +33,8 @@ interface TableCardProps {
   itemCount: number;
   heldAt: string | null;
   updatedAt: string;
+  kotEnabled: boolean;
+  kotFiredAt: string | null;
   onPress: () => void;
 }
 
@@ -44,6 +46,8 @@ function TableCard({
   itemCount,
   heldAt,
   updatedAt,
+  kotEnabled,
+  kotFiredAt,
   onPress,
 }: TableCardProps) {
   const elapsed = heldAt ? formatElapsed(heldAt) : null;
@@ -99,15 +103,27 @@ function TableCard({
         >
           {tableNumber}
         </span>
-        {elapsed && (
-          <span
-            className="flex items-center gap-0.5 text-[10px] font-bold"
-            style={{ color: isWarning ? "#B07D00" : "#B83E06" }}
-          >
-            <Clock size={9} />
-            {elapsed}
-          </span>
-        )}
+        <div className="flex flex-col items-end gap-1">
+          {elapsed && (
+            <span
+              className="flex items-center gap-0.5 text-[10px] font-bold"
+              style={{ color: isWarning ? "#B07D00" : "#B83E06" }}
+            >
+              <Clock size={9} />
+              {elapsed}
+            </span>
+          )}
+          {kotEnabled && (
+            <span
+              className="flex items-center gap-0.5 text-[9px] font-bold"
+              style={{ color: kotFiredAt ? "#2D6A4F" : "#B07D00" }}
+              title={kotFiredAt ? "KOT sent to kitchen" : "KOT not yet printed"}
+            >
+              <ClipboardList size={9} />
+              {kotFiredAt ? "SENT" : "PENDING"}
+            </span>
+          )}
+        </div>
       </div>
 
       <div className="mt-2 w-full">
@@ -152,6 +168,7 @@ export default function TablesPage() {
   }, [isLoading, session, router]);
 
   const tableCount = session?.stockSettings?.tableCount ?? 10;
+  const kotEnabled = session?.stockSettings?.kotEnabled ?? false;
 
   // Build lookup: tableId → TableOrder
   const orderByTableId = useMemo(() => {
@@ -283,6 +300,8 @@ export default function TablesPage() {
                   itemCount={order?.items.reduce((s, it) => s + it.qty, 0) ?? 0}
                   heldAt={order?.heldAt ?? null}
                   updatedAt={order?.updatedAt ?? new Date().toISOString()}
+                  kotEnabled={kotEnabled}
+                  kotFiredAt={order?.kotFiredAt ?? null}
                   onPress={() => handleTablePress(tableId)}
                 />
               );
