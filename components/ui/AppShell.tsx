@@ -7,7 +7,13 @@ import BottomNav from "./BottomNav";
 import { Lock } from "lucide-react";
 
 // Pages only an owner can visit. Cashiers are redirected to /pos.
-const OWNER_ONLY_PATHS = ["/dashboard", "/stock", "/settings", "/stats", "/menu", "/ai-dashboard"];
+// NOTE: "/menu" is intentionally NOT owner-only — cashiers get read-only
+// access (view items + availability) so Sprint A3's "cashiers can see but
+// not toggle" has something to see. Edit/delete/toggle controls inside
+// app/menu/page.tsx are still gated by isOwner, and upsertMenuItem /
+// deleteMenuItem / upsertCategory / deleteCategory all reject non-owner
+// writes (canPerform check in AppContext), so this is not the only guard.
+const OWNER_ONLY_PATHS = ["/dashboard", "/stock", "/settings", "/stats", "/ai-dashboard"];
 
 function LoadingScreen() {
   return (
