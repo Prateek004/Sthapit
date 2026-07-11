@@ -59,6 +59,8 @@ export async function syncTableOrder(
         updated_at: order.updatedAt,
         version: order.version,
         gst_percent_at_open: order.gstPercentAtOpen ?? null,
+        kot_fired_at: order.kotFiredAt ?? null,
+        kot_auto_placed: order.kotAutoPlaced ?? false,
       },
       { onConflict: "id" }
     );
@@ -131,6 +133,8 @@ export async function syncAllPendingTableOrders(
         updated_at: order.updatedAt,
         version: order.version,
         gst_percent_at_open: order.gstPercentAtOpen ?? null,
+        kot_fired_at: order.kotFiredAt ?? null,
+        kot_auto_placed: order.kotAutoPlaced ?? false,
       }));
 
       const { error } = await sb
@@ -198,6 +202,8 @@ export async function restoreTableOrdersFromSupabase(
           version: remote.version,
           syncStatus: "synced",
           gstPercentAtOpen: remote.gst_percent_at_open ?? undefined,
+          kotFiredAt: remote.kot_fired_at ?? null,
+          kotAutoPlaced: remote.kot_auto_placed ?? false,
         };
         await dbSaveTableOrder(order, businessId);
       }
@@ -270,6 +276,8 @@ export function subscribeToTableOrders(
           syncStatus: "synced",
           gstPercentAtOpen:
             (remote.gst_percent_at_open as number) ?? undefined,
+          kotFiredAt: (remote.kot_fired_at as string) ?? null,
+          kotAutoPlaced: (remote.kot_auto_placed as boolean) ?? false,
         };
         const { dbSaveTableOrder } = await import("@/lib/db");
         await dbSaveTableOrder(order, businessId);
