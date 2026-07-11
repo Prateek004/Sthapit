@@ -12,7 +12,6 @@ import {
   Bike,
   LayoutGrid,
   BookmarkCheck,
-  ClipboardList,
 } from "lucide-react";
 import CheckoutModal from "./CheckoutModal";
 import type { ServiceMode } from "@/lib/types";
@@ -170,10 +169,18 @@ export default function CartPanel({ onClose }: Props) {
     setDiscountInput("");
   }, [cart.length, itemCount, clearCart]);
 
-  // ── Hold to table — fires KOT immediately if kotEnabled ─────────────────
-  // FIX #7: window.open must be called synchronously in the button handler.
-  // We fire printKot (which opens the window) BEFORE the first await,
-  // so iOS Safari allows the popup.
+  // ── Hold to table ─────────────────────────────────────────────────────────
+  // BUGFIX (Order/KOT): Hold and "Print KOT" used to be entangled here — this
+  // button would fire the KOT using the local, not-yet-persisted `cart` array
+  // while the table-detail page's own Hold button (lib/store/tableStore →
+  // holdOrder) never fired a KOT at all. That divergence is the root cause of
+  // "KOT does not work correctly with Hold Table": if addCartItems below
+  // failed after the KOT had already printed, the kitchen got a ticket for
+  // items that were never actually saved to the table.
+  // Hold now ONLY persists the cart to the table order — it never touches
+  // KOT. Printing the KOT is a separate, explicit action taken from the
+  // table's own screen (Print KOT button), where it always reads the real,
+  // persisted `order.items` instead of a local snapshot.
   const handleHold = async () => {
     if (!tableNumber) {
       showToast("Select a table first", "error");
@@ -186,27 +193,14 @@ export default function CartPanel({ onClose }: Props) {
     const tableName = `Table ${tableNumber}`;
     const heldItems = [...cart];
 
-    // FIX #7: Open KOT window NOW — synchronously, before any await.
-    // iOS Safari only permits window.open() inside a direct gesture handler.
-    if (kotEnabled) {
-      const kotRef = `KOT-T${tableNumber}-${Date.now().toString().slice(-6)}`;
-      printKot({
-        billNumber: kotRef,
-        tableNumber,
-        serviceMode: "dine_in",
-        items: heldItems,
-        businessName: session?.businessName,
-      });
-    }
-
     try {
       await addCartItems(tableId, tableName, tableNumber, heldItems);
       clearCart();
-      if (kotEnabled) {
-        showToast(`Table ${tableNumber} held — KOT fired to kitchen ✓`);
-      } else {
-        showToast(`Cart held on Table ${tableNumber} ✓`);
-      }
+      showToast(
+        kotEnabled
+          ? `Cart held on Table ${tableNumber} — open the table to Print KOT ✓`
+          : `Cart held on Table ${tableNumber} ✓`
+      );
       setTableNumber(undefined);
       onClose?.();
     } catch {
@@ -513,17 +507,11 @@ export default function CartPanel({ onClose }: Props) {
                 disabled={holding || !tableNumber}
                 className="w-full h-11 flex items-center justify-center gap-2 rounded-2xl border-2 border-amber-400 text-amber-700 font-bold text-sm press disabled:opacity-40"
               >
-                {kotEnabled ? (
-                  <ClipboardList size={16} />
-                ) : (
-                  <BookmarkCheck size={16} />
-                )}
+                <BookmarkCheck size={16} />
                 {holding
                   ? "Holding…"
                   : tableNumber
-                  ? kotEnabled
-                    ? `Hold Table ${tableNumber} + Fire KOT`
-                    : `Hold on Table ${tableNumber}`
+                  ? `Hold on Table ${tableNumber}`
                   : "Select a table to hold"}
               </button>
             )}
