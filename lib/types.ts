@@ -63,6 +63,10 @@ export interface StockSettings {
   /** P1 GUARDRAIL: max discount as % of subtotal. 0/undefined = off.
    *  Cashiers are hard-blocked above this; owners get a warning but may proceed. */
   maxDiscountPercent?: number;
+  /** Order/KOT: minutes a held table order may sit without its KOT being
+   *  printed before it is auto-placed (KOT auto-fired) to the kitchen.
+   *  0/undefined = auto-placement disabled — held orders stay held indefinitely. */
+  autoPlaceHeldOrderMinutes?: number;
 }
 
 export interface UserSession {
@@ -329,6 +333,13 @@ export interface TableOrder {
   syncStatus: "pending" | "synced" | "failed";
   /** GST rate locked at table-open time. Rate changes never retroactively alter open tables. */
   gstPercentAtOpen?: number;
+  /** Order/KOT: when the KOT for the CURRENT item set was last sent to the kitchen.
+   *  null = items have changed (or order was just opened) since the last KOT print,
+   *  so "Print KOT" is actionable. Set by markKotFired(), cleared whenever items change. */
+  kotFiredAt?: string | null;
+  /** Order/KOT: true when kotFiredAt was set by the auto-placement timer rather
+   *  than a manual "Print KOT" tap — purely informational, shown as a badge. */
+  kotAutoPlaced?: boolean;
 }
 
 export interface RestaurantTable {
