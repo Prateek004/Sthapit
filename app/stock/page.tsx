@@ -264,6 +264,85 @@ function CatEditModal({
   );
 }
 
+function CatDeleteModal({
+  cat,
+  itemCount,
+  otherCategories,
+  busy,
+  onClose,
+  onReassign,
+  onDeleteAll,
+}: {
+  cat: MenuCategory | null;
+  itemCount: number;
+  otherCategories: MenuCategory[];
+  busy: boolean;
+  onClose: () => void;
+  onReassign: (targetCatId: string) => void;
+  onDeleteAll: () => void;
+}) {
+  const [targetId, setTargetId] = useState(otherCategories[0]?.id ?? "");
+  const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
+  const canReassign = otherCategories.length > 0;
+
+  return (
+    <Modal open={!!cat} onClose={busy ? () => {} : onClose} title={`Delete "${cat?.name ?? ""}"?`}>
+      <div className="px-5 pb-6 pt-2 space-y-4">
+        <div className="flex items-start gap-2 bg-orange-50 border border-orange-100 rounded-xl p-3">
+          <AlertTriangle size={16} className="text-orange-500 shrink-0 mt-0.5" />
+          <p className="text-sm text-orange-700">
+            This category has <b>{itemCount} item{itemCount > 1 ? "s" : ""}</b>. Choose what happens to them.
+          </p>
+        </div>
+
+        {canReassign && (
+          <div className="bg-gray-50 rounded-2xl p-4 space-y-3">
+            <p className="text-sm font-bold text-gray-700">Move items to another category</p>
+            <select className="bm-input" value={targetId} onChange={(e) => setTargetId(e.target.value)} disabled={busy}>
+              {otherCategories.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+            <button
+              onClick={() => targetId && onReassign(targetId)}
+              disabled={busy || !targetId}
+              className="w-full h-11 bg-primary-500 text-white rounded-xl font-bold press shadow-sm disabled:opacity-40"
+            >
+              {busy ? "Working..." : "Move items & delete category"}
+            </button>
+          </div>
+        )}
+
+        <div className="bg-red-50 rounded-2xl p-4 space-y-3">
+          <p className="text-sm font-bold text-red-700">Delete category and all {itemCount} item{itemCount > 1 ? "s" : ""}</p>
+          <p className="text-xs text-red-500">This cannot be undone. Items will be removed from the menu permanently.</p>
+          {!confirmDeleteAll ? (
+            <button
+              onClick={() => setConfirmDeleteAll(true)}
+              disabled={busy}
+              className="w-full h-11 border-2 border-red-200 text-red-600 rounded-xl font-bold press disabled:opacity-40"
+            >
+              Delete everything
+            </button>
+          ) : (
+            <button
+              onClick={onDeleteAll}
+              disabled={busy}
+              className="w-full h-11 bg-red-500 text-white rounded-xl font-bold press shadow-sm disabled:opacity-40"
+            >
+              {busy ? "Deleting..." : "Yes, permanently delete all"}
+            </button>
+          )}
+        </div>
+
+        <button onClick={onClose} disabled={busy} className="w-full h-11 text-gray-500 font-bold press disabled:opacity-40">
+          Cancel
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 function RawMaterialModal({
   item,
   onClose,
@@ -565,6 +644,8 @@ export default function StockPage() {
   const [editBar, setEditBar] = useState<Partial<FinishedGood> | null>(null);
   const [editItem, setEditItem] = useState<Partial<MenuItem> | null>(null);
   const [editCat, setEditCat] = useState<Partial<MenuCategory> | null>(null);
+  const [deleteCat, setDeleteCat] = useState<MenuCategory | null>(null);
+  const [catDeleteBusy, setCatDeleteBusy] = useState(false);
 
   const [expandedCats, setExpandedCats] = useState<Set<string>>(new Set(categories.map((c) => c.id)));
 
@@ -607,13 +688,57 @@ export default function StockPage() {
     setEditCat(null);
   };
 
-  const handleDeleteCat = async (id: string) => {
+  const handleDeleteCat = (id: string) => {
     if (!isOwner) return;
-    if (!confirm("Delete this category and all its items?")) return;
-    const catItems = menuItems.filter((i) => i.categoryId === id);
-    for (const item of catItems) await deleteMenuItem(item.id);
-    await deleteCategory(id);
-    showToast("Category deleted");
+    const cat = categories.find((c) => c.id === id);
+    if (!cat) return;
+    const itemCount = menuItems.filter((i) => i.categoryId === id).length;
+    if (itemCount === 0) {
+      // Empty category — safe to delete with a simple confirm
+      if (!confirm(`Delete category "${cat.name}"?`)) return;
+      deleteCategory(id)
+        .then(() => showToast("Category deleted"))
+        .catch(() => showToast("Failed to delete category", "error"));
+      return;
+    }
+    // Has items — open reassign-or-delete modal
+    setDeleteCat(cat);
+  };
+
+  const handleReassignAndDelete = async (targetCatId: string) => {
+    if (!deleteCat || catDeleteBusy) return;
+    setCatDeleteBusy(true);
+    try {
+      const catItems = menuItems.filter((i) => i.categoryId === deleteCat.id);
+      for (const item of catItems) {
+        await upsertMenuItem({ ...item, categoryId: targetCatId });
+      }
+      await deleteCategory(deleteCat.id);
+      showToast(`Moved ${catItems.length} item${catItems.length > 1 ? "s" : ""} & deleted category`);
+      setDeleteCat(null);
+    } catch {
+      showToast("Failed — nothing was lost, try again", "error");
+    } finally {
+      setCatDeleteBusy(false);
+    }
+  };
+
+  const handleDeleteCatWithItems = async () => {
+    if (!deleteCat || catDeleteBusy) return;
+    setCatDeleteBusy(true);
+    try {
+      const catItems = menuItems.filter((i) => i.categoryId === deleteCat.id);
+      for (const item of catItems) {
+        await deleteMenuItem(item.id);
+      }
+      await deleteCategory(deleteCat.id);
+      showToast("Category and items deleted");
+      setDeleteCat(null);
+    } catch {
+      showToast("Delete failed — some items may remain, retry", "error");
+    } finally {
+      setCatDeleteBusy(false);
+    }
   };
 
   const handleSaveRaw = async (item: RawMaterial) => {
@@ -921,9 +1046,36 @@ export default function StockPage() {
         onClose={() => setEditCat(null)}
         onSave={handleSaveCat}
       />
-      <RawMaterialModal item={editRaw} onClose={() => setEditRaw(null)} onSave={handleSaveRaw} />
-      <FinishedGoodModal item={editFinished} onClose={() => setEditFinished(null)} onSave={handleSaveFinished} />
-      {showBarTab && <BarItemModal item={editBar} onClose={() => setEditBar(null)} onSave={handleSaveBar} />}
+      <RawMaterialModal
+        key={editRaw ? (editRaw.id ?? "new-raw") : "closed-raw"}
+        item={editRaw}
+        onClose={() => setEditRaw(null)}
+        onSave={handleSaveRaw}
+      />
+      <FinishedGoodModal
+        key={editFinished ? (editFinished.id ?? "new-finished") : "closed-finished"}
+        item={editFinished}
+        onClose={() => setEditFinished(null)}
+        onSave={handleSaveFinished}
+      />
+      {showBarTab && (
+        <BarItemModal
+          key={editBar ? (editBar.id ?? "new-bar") : "closed-bar"}
+          item={editBar}
+          onClose={() => setEditBar(null)}
+          onSave={handleSaveBar}
+        />
+      )}
+      <CatDeleteModal
+        key={deleteCat ? deleteCat.id : "closed-catdel"}
+        cat={deleteCat}
+        itemCount={deleteCat ? menuItems.filter((i) => i.categoryId === deleteCat.id).length : 0}
+        otherCategories={deleteCat ? categories.filter((c) => c.id !== deleteCat.id) : []}
+        busy={catDeleteBusy}
+        onClose={() => setDeleteCat(null)}
+        onReassign={handleReassignAndDelete}
+        onDeleteAll={handleDeleteCatWithItems}
+      />
     </AppShell>
   );
 }
