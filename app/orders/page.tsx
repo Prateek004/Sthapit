@@ -261,7 +261,7 @@ function BillScreen({
     { id: "invoice",  label: "Invoice",  Icon: Printer       },
     { id: "whatsapp", label: "WhatsApp", Icon: MessageCircle },
     ...(kotEnabled
-      ? [{ id: "kot" as PostTab, label: "KOT", Icon: ClipboardList }]
+      ? [{ id: "kot" as PostTab, label: "Print KOT", Icon: ClipboardList }]
       : []),
   ];
 
