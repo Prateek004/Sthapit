@@ -288,7 +288,7 @@ export default function CheckoutModal({
                 <p className="text-xs text-gray-400">
                   {kotFired
                     ? "Kitchen is preparing the order"
-                    : "Fire KOT before or after payment"}
+                    : "Print KOT before or after payment"}
                 </p>
               </div>
               {!kotFired && (
@@ -296,7 +296,7 @@ export default function CheckoutModal({
                   onClick={handleFireKot}
                   className="shrink-0 px-3 py-1.5 rounded-xl bg-orange-500 text-white text-xs font-bold press"
                 >
-                  Fire KOT
+                  Print KOT
                 </button>
               )}
             </div>
@@ -565,7 +565,7 @@ export default function CheckoutModal({
   // ── Post-payment screen ─────────────────────────────────────────────────
   const postTabs: { id: PostTab; label: string; Icon: React.ElementType }[] = [
     ...(kotEnabled
-      ? [{ id: "kot" as PostTab, label: "KOT", Icon: ClipboardList }]
+      ? [{ id: "kot" as PostTab, label: "Print KOT", Icon: ClipboardList }]
       : []),
     { id: "invoice" as PostTab, label: "Invoice", Icon: Printer },
     { id: "whatsapp" as PostTab, label: "WhatsApp", Icon: MessageCircle },
