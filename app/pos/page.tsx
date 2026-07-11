@@ -26,13 +26,14 @@ export default function POSPage() {
     if (!isLoading && !session) router.replace("/auth");
   }, [isLoading, session, router]);
 
-  const filteredItems = menuItems.filter((item) => {
-    if (!item.isAvailable) return false;
-    const catOk = activeCat === "all" || item.categoryId === activeCat;
-    const searchOk =
-      !search || item.name.toLowerCase().includes(search.toLowerCase());
-    return catOk && searchOk;
-  });
+  const filteredItems = menuItems
+    .filter((item) => {
+      const catOk = activeCat === "all" || item.categoryId === activeCat;
+      const searchOk =
+        !search || item.name.toLowerCase().includes(search.toLowerCase());
+      return catOk && searchOk;
+    })
+    .sort((a, b) => Number(b.isAvailable) - Number(a.isAvailable));
 
   // Cart totals for the floating button — mirrors CartPanel logic exactly
   const subtotalPaise = cart.reduce((s, i) => {
