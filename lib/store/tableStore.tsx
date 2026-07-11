@@ -100,6 +100,8 @@ function makeTableOrder(
     version: 1,
     syncStatus: "pending",
     gstPercentAtOpen,
+    kotFiredAt: null,
+    kotAutoPlaced: false,
   };
 }
 
@@ -148,6 +150,7 @@ interface TableStoreContextValue {
   removeItem: (tableId: string, cartId: string) => Promise<void>;
   setDiscount: (tableId: string, discountPaise: number) => Promise<void>;
   holdOrder: (tableId: string) => Promise<void>;
+  markKotFired: (tableId: string, auto?: boolean) => Promise<void>;
   clearOrder: (tableId: string) => Promise<void>;
   getTableOrder: (tableId: string) => TableOrder | null;
 }
@@ -316,6 +319,10 @@ export function TableStoreProvider({
           heldAt: base.heldAt ?? now,
           version: base.version + 1,
           syncStatus: "pending",
+          // BUGFIX: items changed since the last KOT print — a stale "already
+          // printed" flag would let new items silently miss the kitchen.
+          kotFiredAt: null,
+          kotAutoPlaced: false,
         };
       });
 
@@ -379,6 +386,9 @@ export function TableStoreProvider({
           heldAt: base.heldAt ?? now,
           version: base.version + 1,
           syncStatus: "pending",
+          // BUGFIX: items changed since the last KOT print — see addItem() above.
+          kotFiredAt: null,
+          kotAutoPlaced: false,
         };
       });
     },
@@ -413,6 +423,9 @@ export function TableStoreProvider({
           updatedAt: now,
           version: existing.version + 1,
           syncStatus: "pending",
+          // BUGFIX: items changed since the last KOT print — see addItem() above.
+          kotFiredAt: null,
+          kotAutoPlaced: false,
         };
       });
     },
@@ -484,6 +497,61 @@ export function TableStoreProvider({
     [persistAtomic]
   );
 
+  // Order/KOT: marks the CURRENT item set as sent to the kitchen. Called by
+  // the "Print KOT" button (auto=false) and by the auto-placement timer
+  // below (auto=true) after a held order sits past the configured interval.
+  // Decoupled from holdOrder — Hold never implicitly fires a KOT, and
+  // printing a KOT never implicitly holds — this is the H-Orders fix.
+  const markKotFired = useCallback(
+    async (tableId: string, auto: boolean = false): Promise<void> => {
+      await persistAtomic(tableId, (existing) => {
+        if (!existing || existing.items.length === 0) return null;
+        const now = new Date().toISOString();
+        return {
+          ...existing,
+          kotFiredAt: now,
+          kotAutoPlaced: auto,
+          updatedAt: now,
+          version: existing.version + 1,
+          syncStatus: "pending",
+        };
+      });
+
+      logAudit(auto ? "TABLE_KOT_AUTO_PLACED" : "TABLE_KOT_PRINTED", uidRef.current, {
+        entityType: "table",
+        entityId: tableId,
+      });
+    },
+    [persistAtomic]
+  );
+
+  // ── Auto-placement: held orders whose KOT hasn't been printed within the
+  // configured interval get auto-fired. Configured via Settings → POS
+  // Features → "Auto-place held orders after". 0/undefined = disabled.
+  const autoPlaceMinutesRef = useRef(session?.stockSettings?.autoPlaceHeldOrderMinutes ?? 0);
+  autoPlaceMinutesRef.current = session?.stockSettings?.autoPlaceHeldOrderMinutes ?? 0;
+
+  useEffect(() => {
+    if (!session?.businessId) return;
+    const interval = setInterval(() => {
+      const minutes = autoPlaceMinutesRef.current;
+      if (!minutes || minutes <= 0) return;
+      const now = Date.now();
+      for (const order of Object.values(stateRef.current.orders)) {
+        if (
+          order.status === "OCCUPIED" &&
+          order.items.length > 0 &&
+          order.heldAt &&
+          !order.kotFiredAt &&
+          now - new Date(order.heldAt).getTime() >= minutes * 60_000
+        ) {
+          markKotFired(order.tableId, true).catch(() => {});
+        }
+      }
+    }, 20_000);
+    return () => clearInterval(interval);
+  }, [session?.businessId, markKotFired]);
+
   // FIX C-01: clearOrder now syncs the deletion to Supabase
   const clearOrder = useCallback(
     async (tableId: string): Promise<void> => {
@@ -501,6 +569,8 @@ export function TableStoreProvider({
         discountPaise: 0,
         totalPaise: 0,
         heldAt: null,
+        kotFiredAt: null,
+        kotAutoPlaced: false,
         updatedAt: new Date().toISOString(),
         version: existing.version + 1,
         syncStatus: "pending",
@@ -535,6 +605,7 @@ export function TableStoreProvider({
         removeItem,
         setDiscount,
         holdOrder,
+        markKotFired,
         clearOrder,
         getTableOrder,
       }}
