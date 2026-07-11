@@ -36,6 +36,7 @@ export default function SettingsPage() {
   const [tableCount, setTableCount] = useState(ss.tableCount);
   const [openTableBilling, setOpenTableBilling] = useState(ss.openTableBilling ?? false);
   const [maxDiscount, setMaxDiscount] = useState(ss.maxDiscountPercent ?? 0);
+  const [autoPlaceMinutes, setAutoPlaceMinutes] = useState(ss.autoPlaceHeldOrderMinutes ?? 0);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -51,13 +52,14 @@ export default function SettingsPage() {
       setOpenTableBilling(s.openTableBilling ?? false);
       setGstInclusive(s.gstInclusive ?? false); // P1-06
       setMaxDiscount(s.maxDiscountPercent ?? 0);
+      setAutoPlaceMinutes(s.autoPlaceHeldOrderMinutes ?? 0);
     }
   }, [session?.businessId]);
 
   const handleSave = async () => {
     if (!session) return;
     setSaving(true);
-    const stockSettings: StockSettings = { tablesEnabled, kotEnabled, barEnabled, tableCount, openTableBilling, gstInclusive, maxDiscountPercent: maxDiscount };
+    const stockSettings: StockSettings = { tablesEnabled, kotEnabled, barEnabled, tableCount, openTableBilling, gstInclusive, maxDiscountPercent: maxDiscount, autoPlaceHeldOrderMinutes: autoPlaceMinutes };
     const updated = { ...session, gstPercent: gst, upiId: upiId.trim() || undefined, stockSettings };
     setSession(updated);
     if (isSupabaseEnabled()) {
@@ -302,6 +304,35 @@ export default function SettingsPage() {
                   icon={<span style={{ fontSize: 15 }}>🖨️</span>}
                   divider
                 />
+                {kotEnabled && tablesEnabled && (
+                  <div style={{ padding: "4px 20px 16px", borderBottom: "0.5px solid rgba(28,20,16,0.06)" }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#9C8E87", letterSpacing: "0.06em", marginBottom: 10 }}>
+                      AUTO-PLACE HELD ORDERS AFTER
+                    </div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      {[0, 5, 10, 15, 20, 30].map((m) => (
+                        <button
+                          key={m}
+                          onClick={() => setAutoPlaceMinutes(m)}
+                          style={{
+                            padding: "10px 14px", borderRadius: 10,
+                            border: `1.5px solid ${autoPlaceMinutes === m ? "#7B52B8" : "rgba(28,20,16,0.1)"}`,
+                            background: autoPlaceMinutes === m ? "#F5F0FA" : "white",
+                            color: autoPlaceMinutes === m ? "#7B52B8" : "#5C4E47",
+                            fontWeight: 700, fontSize: 13, cursor: "pointer",
+                          }}
+                        >
+                          {m === 0 ? "Off" : `${m}m`}
+                        </button>
+                      ))}
+                    </div>
+                    <p style={{ fontSize: 11, color: "#9C8E87", marginTop: 8, lineHeight: 1.4 }}>
+                      {autoPlaceMinutes === 0
+                        ? "Held orders wait for a manual Print KOT — no auto-placement."
+                        : `If a held table's KOT hasn't been printed within ${autoPlaceMinutes} minute${autoPlaceMinutes === 1 ? "" : "s"}, it's automatically fired to the kitchen.`}
+                    </p>
+                  </div>
+                )}
                 {showOpenTableToggle && (
                   <PremiumToggle
                     label="Open Table Billing"
