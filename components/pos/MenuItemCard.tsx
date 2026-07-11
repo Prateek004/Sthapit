@@ -15,7 +15,7 @@ export default function MenuItemCard({
   onConfigPress,
   compact = false,
 }: Props) {
-  const { state, addToCart, updateCartQty } = useApp();
+  const { state, addToCart, updateCartQty, showToast } = useApp();
 
   // Total qty of this item across all cart entries (different customisations)
   const cartEntries = state.cart.filter((c) => c.menuItemId === item.id);
@@ -28,13 +28,16 @@ export default function MenuItemCard({
 
   /**
    * Tap behaviour:
-   * - Unavailable → do nothing
+   * - Unavailable → toast, do NOT add to cart
    * - Has options  → always open config modal (user must choose size/add-ons)
    * - No options, already in cart → increment the single cart entry directly
    * - No options, not in cart → fast-add qty 1
    */
   const handlePress = () => {
-    if (!item.isAvailable) return;
+    if (!item.isAvailable) {
+      showToast("Item unavailable — mark available in Menu", "error");
+      return;
+    }
 
     if (hasOptions) {
       onConfigPress(item);
@@ -82,10 +85,9 @@ export default function MenuItemCard({
     return (
       <button
         onClick={handlePress}
-        disabled={!item.isAvailable}
         className={`relative w-full rounded-xl border transition-all text-left press ${
           !item.isAvailable
-            ? "opacity-40 border-gray-100 bg-gray-50 cursor-not-allowed"
+            ? "opacity-40 border-gray-100 bg-gray-50"
             : cartQty > 0
             ? "border-primary-300 bg-primary-50"
             : "border-gray-100 bg-white"
@@ -114,7 +116,7 @@ export default function MenuItemCard({
               {item.isAvailable ? "In Stock" : "Out"}
             </span>
           </div>
-          <p className="text-xs font-bold text-gray-900 leading-tight line-clamp-2 min-h-[2rem]">
+          <p className={`text-xs font-bold leading-tight line-clamp-2 min-h-[2rem] ${!item.isAvailable ? "text-gray-400 line-through" : "text-gray-900"}`}>
             {item.name}
           </p>
           {hasOptions && (
@@ -183,10 +185,9 @@ export default function MenuItemCard({
   return (
     <button
       onClick={handlePress}
-      disabled={!item.isAvailable}
       className={`relative w-full p-3 rounded-2xl border-2 text-left transition-all press ${
         !item.isAvailable
-          ? "opacity-40 border-gray-100 bg-gray-50 cursor-not-allowed"
+          ? "opacity-40 border-gray-100 bg-gray-50"
           : cartQty > 0
           ? "border-primary-300 bg-primary-50"
           : "border-gray-100 bg-white hover:border-gray-200"
@@ -218,7 +219,7 @@ export default function MenuItemCard({
       </div>
 
       {/* Name */}
-      <p className="text-sm font-bold text-gray-900 leading-tight line-clamp-2 mb-2 min-h-[2.5rem]">
+      <p className={`text-sm font-bold leading-tight line-clamp-2 mb-2 min-h-[2.5rem] ${!item.isAvailable ? "text-gray-400 line-through" : "text-gray-900"}`}>
         {item.name}
       </p>
 
