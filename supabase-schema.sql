@@ -261,3 +261,12 @@ CREATE POLICY "menu_categories_business" ON menu_categories FOR ALL USING (has_b
 DROP POLICY IF EXISTS "audit_events_owner_read"   ON audit_events;
 DROP POLICY IF EXISTS "audit_events_business_read" ON audit_events;
 CREATE POLICY "audit_events_business_read" ON audit_events FOR SELECT USING (has_business_access(business_id));
+
+-- ============================================================
+-- STH1R SAAS MIGRATION — PHASE 2 (Order/KOT module)
+-- Adds KOT-fired tracking to table_orders so "Print KOT" state
+-- (and the auto-placement timer) survives reloads and syncs
+-- across every device on the business. Re-runnable.
+-- ============================================================
+ALTER TABLE table_orders ADD COLUMN IF NOT EXISTS kot_fired_at   TIMESTAMPTZ;
+ALTER TABLE table_orders ADD COLUMN IF NOT EXISTS kot_auto_placed BOOLEAN NOT NULL DEFAULT false;
