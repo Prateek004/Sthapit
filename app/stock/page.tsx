@@ -345,14 +345,17 @@ function CatDeleteModal({
 
 function RawMaterialModal({
   item,
+  existingCategories,
   onClose,
   onSave,
 }: {
   item: Partial<RawMaterial> | null;
+  existingCategories: string[];
   onClose: () => void;
   onSave: (i: RawMaterial) => void;
 }) {
   const [name, setName] = useState(item?.name ?? "");
+  const [category, setCategory] = useState(item?.category ?? "");
   const [unit, setUnit] = useState(item?.unit ?? "kg");
   const [stock, setStock] = useState(item?.currentStock != null ? String(item.currentStock) : "");
   const [minStock, setMinStock] = useState(item?.minStock != null ? String(item.minStock) : "");
@@ -360,6 +363,7 @@ function RawMaterialModal({
 
   useEffect(() => {
     setName(item?.name ?? "");
+    setCategory(item?.category ?? "");
     setUnit(item?.unit ?? "kg");
     setStock(item?.currentStock != null ? String(item.currentStock) : "");
     setMinStock(item?.minStock != null ? String(item.minStock) : "");
@@ -371,6 +375,7 @@ function RawMaterialModal({
     onSave({
       id: item?.id ?? crypto.randomUUID(),
       name: name.trim(),
+      category: category.trim() || undefined,
       unit,
       currentStock: Number(stock) || 0,
       minStock: minStock ? Number(minStock) : undefined,
@@ -385,6 +390,11 @@ function RawMaterialModal({
         <div>
           <label className="block text-xs font-bold text-gray-500 mb-1.5">Item Name *</label>
           <input className="bm-input" placeholder="e.g. Onion, Milk, Bread" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
+        </div>
+        <div>
+          <label className="block text-xs font-bold text-gray-500 mb-1.5">Category <span className="font-normal text-gray-400">optional</span></label>
+          <input className="bm-input" list="raw-cat-list" placeholder="e.g. Vegetables, Dairy, Spices" value={category} onChange={(e) => setCategory(e.target.value)} />
+          <datalist id="raw-cat-list">{existingCategories.map((c) => <option key={c} value={c} />)}</datalist>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -418,14 +428,17 @@ function RawMaterialModal({
 
 function FinishedGoodModal({
   item,
+  existingCategories,
   onClose,
   onSave,
 }: {
   item: Partial<FinishedGood> | null;
+  existingCategories: string[];
   onClose: () => void;
   onSave: (i: FinishedGood) => void;
 }) {
   const [name, setName] = useState(item?.name ?? "");
+  const [category, setCategory] = useState(item?.category ?? "");
   const [unit, setUnit] = useState(item?.unit ?? "piece");
   const [qty, setQty] = useState(item?.quantity != null ? String(item.quantity) : "");
   const [cost, setCost] = useState(item?.costPricePaise != null ? String(item.costPricePaise / 100) : "");
@@ -435,6 +448,7 @@ function FinishedGoodModal({
 
   useEffect(() => {
     setName(item?.name ?? "");
+    setCategory(item?.category ?? "");
     setUnit(item?.unit ?? "piece");
     setQty(item?.quantity != null ? String(item.quantity) : "");
     setCost(item?.costPricePaise != null ? String(item.costPricePaise / 100) : "");
@@ -447,6 +461,7 @@ function FinishedGoodModal({
     onSave({
       id: item?.id ?? crypto.randomUUID(),
       name: name.trim(),
+      category: category.trim() || undefined,
       unit,
       quantity: Number(qty) || 0,
       costPricePaise: cost ? Math.round(Number(cost) * 100) : undefined,
@@ -465,6 +480,11 @@ function FinishedGoodModal({
         <div>
           <label className="block text-xs font-bold text-gray-500 mb-1.5">Item Name *</label>
           <input className="bm-input" placeholder="e.g. Ice Cream, Cake, Cold Drink" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
+        </div>
+        <div>
+          <label className="block text-xs font-bold text-gray-500 mb-1.5">Category <span className="font-normal text-gray-400">optional</span></label>
+          <input className="bm-input" list="fin-cat-list" placeholder="e.g. Beverages, Frozen, Bakery" value={category} onChange={(e) => setCategory(e.target.value)} />
+          <datalist id="fin-cat-list">{existingCategories.map((c) => <option key={c} value={c} />)}</datalist>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -502,14 +522,17 @@ function FinishedGoodModal({
 
 function BarItemModal({
   item,
+  existingCategories,
   onClose,
   onSave,
 }: {
   item: Partial<FinishedGood> | null;
+  existingCategories: string[];
   onClose: () => void;
   onSave: (i: FinishedGood) => void;
 }) {
   const [name, setName] = useState(item?.name ?? "");
+  const [category, setCategory] = useState(item?.category ?? "");
   const [unit, setUnit] = useState(item?.unit ?? "bottle");
   const [qty, setQty] = useState(item?.quantity != null ? String(item.quantity) : "");
   const [cost, setCost] = useState(item?.costPricePaise != null ? String(item.costPricePaise / 100) : "");
@@ -517,6 +540,7 @@ function BarItemModal({
 
   useEffect(() => {
     setName(item?.name ?? "");
+    setCategory(item?.category ?? "");
     setUnit(item?.unit ?? "bottle");
     setQty(item?.quantity != null ? String(item.quantity) : "");
     setCost(item?.costPricePaise != null ? String(item.costPricePaise / 100) : "");
@@ -528,6 +552,7 @@ function BarItemModal({
     onSave({
       id: item?.id ?? crypto.randomUUID(),
       name: name.trim(),
+      category: category.trim() || undefined,
       unit,
       quantity: Number(qty) || 0,
       costPricePaise: cost ? Math.round(Number(cost) * 100) : undefined,
@@ -543,6 +568,11 @@ function BarItemModal({
         <div>
           <label className="block text-xs font-bold text-gray-500 mb-1.5">Item Name *</label>
           <input className="bm-input" placeholder="e.g. Whisky, Beer, Wine" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
+        </div>
+        <div>
+          <label className="block text-xs font-bold text-gray-500 mb-1.5">Category <span className="font-normal text-gray-400">optional</span></label>
+          <input className="bm-input" list="bar-cat-list" placeholder="e.g. Whisky, Beer, Wine, Spirits" value={category} onChange={(e) => setCategory(e.target.value)} />
+          <datalist id="bar-cat-list">{existingCategories.map((c) => <option key={c} value={c} />)}</datalist>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -944,30 +974,43 @@ export default function StockPage() {
               {rawMaterials.length === 0 ? (
                 <EmptyState icon="🥬" label="No raw materials" sub="Track onion, milk, bread and more" />
               ) : (
-                rawMaterials.map((item) => {
-                  const isLow = item.minStock != null && item.currentStock <= item.minStock;
-                  return (
-                    <div key={item.id} className="bg-white rounded-2xl shadow-sm p-4 flex items-center gap-3">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <p className="font-bold text-gray-900 truncate">{item.name}</p>
-                          {isLow && <AlertTriangle size={14} className="text-orange-400 shrink-0" />}
-                        </div>
-                        <p className="text-sm text-gray-500 mt-0.5">
-                          {item.currentStock} {item.unit}
-                          {item.minStock != null && <span className="text-gray-400"> · min {item.minStock}</span>}
-                          {item.costPaise != null && <span className="text-gray-400"> · {fmtRupee(item.costPaise)}/{item.unit}</span>}
-                        </p>
-                      </div>
-                      {isOwner && (
-                        <div className="flex gap-2 shrink-0">
-                          <button onClick={() => setEditRaw(item)} className="text-gray-400 press p-1"><Pencil size={15} /></button>
-                          <button onClick={() => handleDeleteRaw(item.id)} className="text-red-400 press p-1"><Trash2 size={15} /></button>
-                        </div>
-                      )}
+                (() => {
+                  const grouped = new Map<string, RawMaterial[]>();
+                  rawMaterials.forEach((item) => {
+                    const cat = item.category || "Uncategorised";
+                    grouped.set(cat, [...(grouped.get(cat) ?? []), item]);
+                  });
+                  const cats = Array.from(grouped.keys()).sort((a, b) => a === "Uncategorised" ? 1 : b === "Uncategorised" ? -1 : a.localeCompare(b));
+                  return cats.map((cat) => (
+                    <div key={cat} className="space-y-2">
+                      {cats.length > 1 && <p className="text-xs font-bold text-gray-400 uppercase tracking-wider px-1 pt-2">{cat}</p>}
+                      {grouped.get(cat)!.map((item) => {
+                        const isLow = item.minStock != null && item.currentStock <= item.minStock;
+                        return (
+                          <div key={item.id} className="bg-white rounded-2xl shadow-sm p-4 flex items-center gap-3">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <p className="font-bold text-gray-900 truncate">{item.name}</p>
+                                {isLow && <AlertTriangle size={14} className="text-orange-400 shrink-0" />}
+                              </div>
+                              <p className="text-sm text-gray-500 mt-0.5">
+                                {item.currentStock} {item.unit}
+                                {item.minStock != null && <span className="text-gray-400"> · min {item.minStock}</span>}
+                                {item.costPaise != null && <span className="text-gray-400"> · {fmtRupee(item.costPaise)}/{item.unit}</span>}
+                              </p>
+                            </div>
+                            {isOwner && (
+                              <div className="flex gap-2 shrink-0">
+                                <button onClick={() => setEditRaw(item)} className="text-gray-400 press p-1"><Pencil size={15} /></button>
+                                <button onClick={() => handleDeleteRaw(item.id)} className="text-red-400 press p-1"><Trash2 size={15} /></button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
-                  );
-                })
+                  ));
+                })()
               )}
             </>
           )}
@@ -978,40 +1021,53 @@ export default function StockPage() {
               {finishedGoods.length === 0 ? (
                 <EmptyState icon="🎂" label="No finished goods" sub="Track ice cream, cakes, cold drinks etc" />
               ) : (
-                finishedGoods.map((item) => {
-                  const expired = item.expiryDate && item.expiryDate < today;
-                  const expiringSoon = item.expiryDate && !expired && item.expiryDate <= new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10);
-                  return (
-                    <div key={item.id} className={`bg-white rounded-2xl shadow-sm p-4 flex items-center gap-3 ${expired ? "border-2 border-red-200" : ""}`}>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <p className="font-bold text-gray-900 truncate">{item.name}</p>
-                          {expired && <span className="text-[10px] font-bold bg-red-100 text-red-600 px-2 py-0.5 rounded-full shrink-0">Expired</span>}
-                          {expiringSoon && !expired && <span className="text-[10px] font-bold bg-orange-100 text-orange-600 px-2 py-0.5 rounded-full shrink-0">Expiring soon</span>}
-                        </div>
-                        <p className="text-sm text-gray-500 mt-0.5">
-                          {item.quantity} {item.unit}
-                          {item.costPricePaise != null && <span className="text-gray-400"> · Cost {fmtRupee(item.costPricePaise)}</span>}
-                          {item.sellingPricePaise != null && <span className="text-gray-400"> · Sell {fmtRupee(item.sellingPricePaise)}</span>}
-                        </p>
-                        {item.expiryDate && (
-                          <p className={`text-xs mt-0.5 font-semibold ${expired ? "text-red-500" : expiringSoon ? "text-orange-500" : "text-gray-400"}`}>
-                            Expires {item.expiryDate}
-                          </p>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-3 shrink-0">
-                        <BillingToggle item={item} isOwner={isOwner} uid={uid} onToggle={setFinishedGoods} />
-                        {isOwner && (
-                          <>
-                            <button onClick={() => setEditFinished(item)} className="text-gray-400 press p-1"><Pencil size={15} /></button>
-                            <button onClick={() => handleDeleteFinished(item.id)} className="text-red-400 press p-1"><Trash2 size={15} /></button>
-                          </>
-                        )}
-                      </div>
+                (() => {
+                  const grouped = new Map<string, FinishedGood[]>();
+                  finishedGoods.forEach((item) => {
+                    const cat = item.category || "Uncategorised";
+                    grouped.set(cat, [...(grouped.get(cat) ?? []), item]);
+                  });
+                  const cats = Array.from(grouped.keys()).sort((a, b) => a === "Uncategorised" ? 1 : b === "Uncategorised" ? -1 : a.localeCompare(b));
+                  return cats.map((cat) => (
+                    <div key={cat} className="space-y-2">
+                      {cats.length > 1 && <p className="text-xs font-bold text-gray-400 uppercase tracking-wider px-1 pt-2">{cat}</p>}
+                      {grouped.get(cat)!.map((item) => {
+                        const expired = item.expiryDate && item.expiryDate < today;
+                        const expiringSoon = item.expiryDate && !expired && item.expiryDate <= new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10);
+                        return (
+                          <div key={item.id} className={`bg-white rounded-2xl shadow-sm p-4 flex items-center gap-3 ${expired ? "border-2 border-red-200" : ""}`}>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className="font-bold text-gray-900 truncate">{item.name}</p>
+                                {expired && <span className="text-[10px] font-bold bg-red-100 text-red-600 px-2 py-0.5 rounded-full shrink-0">Expired</span>}
+                                {expiringSoon && !expired && <span className="text-[10px] font-bold bg-orange-100 text-orange-600 px-2 py-0.5 rounded-full shrink-0">Expiring soon</span>}
+                              </div>
+                              <p className="text-sm text-gray-500 mt-0.5">
+                                {item.quantity} {item.unit}
+                                {item.costPricePaise != null && <span className="text-gray-400"> · Cost {fmtRupee(item.costPricePaise)}</span>}
+                                {item.sellingPricePaise != null && <span className="text-gray-400"> · Sell {fmtRupee(item.sellingPricePaise)}</span>}
+                              </p>
+                              {item.expiryDate && (
+                                <p className={`text-xs mt-0.5 font-semibold ${expired ? "text-red-500" : expiringSoon ? "text-orange-500" : "text-gray-400"}`}>
+                                  Expires {item.expiryDate}
+                                </p>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-3 shrink-0">
+                              <BillingToggle item={item} isOwner={isOwner} uid={uid} onToggle={setFinishedGoods} />
+                              {isOwner && (
+                                <>
+                                  <button onClick={() => setEditFinished(item)} className="text-gray-400 press p-1"><Pencil size={15} /></button>
+                                  <button onClick={() => handleDeleteFinished(item.id)} className="text-red-400 press p-1"><Trash2 size={15} /></button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
-                  );
-                })
+                  ));
+                })()
               )}
             </>
           )}
@@ -1022,34 +1078,47 @@ export default function StockPage() {
               {barItems.length === 0 ? (
                 <EmptyState icon="🍾" label="No bar items" sub="Track whisky, beer, wine and spirits" />
               ) : (
-                barItems.map((item) => {
-                  const expired = item.expiryDate && item.expiryDate < today;
-                  return (
-                    <div key={item.id} className={`bg-white rounded-2xl shadow-sm p-4 flex items-center gap-3 ${expired ? "border-2 border-red-200" : ""}`}>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <p className="font-bold text-gray-900 truncate">{item.name}</p>
-                          {expired && <span className="text-[10px] font-bold bg-red-100 text-red-600 px-2 py-0.5 rounded-full shrink-0">Expired</span>}
-                        </div>
-                        <p className="text-sm text-gray-500 mt-0.5">
-                          {item.quantity} {item.unit}
-                          {item.costPricePaise != null && <span className="text-gray-400"> · {fmtRupee(item.costPricePaise)}</span>}
-                        </p>
-                        {item.expiryDate && (
-                          <p className={`text-xs mt-0.5 font-semibold ${expired ? "text-red-500" : "text-gray-400"}`}>
-                            Expires {item.expiryDate}
-                          </p>
-                        )}
-                      </div>
-                      {isOwner && (
-                        <div className="flex gap-2 shrink-0">
-                          <button onClick={() => setEditBar(item)} className="text-gray-400 press p-1"><Pencil size={15} /></button>
-                          <button onClick={() => handleDeleteBar(item.id)} className="text-red-400 press p-1"><Trash2 size={15} /></button>
-                        </div>
-                      )}
+                (() => {
+                  const grouped = new Map<string, FinishedGood[]>();
+                  barItems.forEach((item) => {
+                    const cat = item.category || "Uncategorised";
+                    grouped.set(cat, [...(grouped.get(cat) ?? []), item]);
+                  });
+                  const cats = Array.from(grouped.keys()).sort((a, b) => a === "Uncategorised" ? 1 : b === "Uncategorised" ? -1 : a.localeCompare(b));
+                  return cats.map((cat) => (
+                    <div key={cat} className="space-y-2">
+                      {cats.length > 1 && <p className="text-xs font-bold text-gray-400 uppercase tracking-wider px-1 pt-2">{cat}</p>}
+                      {grouped.get(cat)!.map((item) => {
+                        const expired = item.expiryDate && item.expiryDate < today;
+                        return (
+                          <div key={item.id} className={`bg-white rounded-2xl shadow-sm p-4 flex items-center gap-3 ${expired ? "border-2 border-red-200" : ""}`}>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <p className="font-bold text-gray-900 truncate">{item.name}</p>
+                                {expired && <span className="text-[10px] font-bold bg-red-100 text-red-600 px-2 py-0.5 rounded-full shrink-0">Expired</span>}
+                              </div>
+                              <p className="text-sm text-gray-500 mt-0.5">
+                                {item.quantity} {item.unit}
+                                {item.costPricePaise != null && <span className="text-gray-400"> · {fmtRupee(item.costPricePaise)}</span>}
+                              </p>
+                              {item.expiryDate && (
+                                <p className={`text-xs mt-0.5 font-semibold ${expired ? "text-red-500" : "text-gray-400"}`}>
+                                  Expires {item.expiryDate}
+                                </p>
+                              )}
+                            </div>
+                            {isOwner && (
+                              <div className="flex gap-2 shrink-0">
+                                <button onClick={() => setEditBar(item)} className="text-gray-400 press p-1"><Pencil size={15} /></button>
+                                <button onClick={() => handleDeleteBar(item.id)} className="text-red-400 press p-1"><Trash2 size={15} /></button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
-                  );
-                })
+                  ));
+                })()
               )}
             </>
           )}
@@ -1074,12 +1143,14 @@ export default function StockPage() {
       <RawMaterialModal
         key={editRaw ? (editRaw.id ?? "new-raw") : "closed-raw"}
         item={editRaw}
+        existingCategories={Array.from(new Set(rawMaterials.map((r) => r.category).filter(Boolean) as string[]))}
         onClose={() => setEditRaw(null)}
         onSave={handleSaveRaw}
       />
       <FinishedGoodModal
         key={editFinished ? (editFinished.id ?? "new-finished") : "closed-finished"}
         item={editFinished}
+        existingCategories={Array.from(new Set(finishedGoods.map((f) => f.category).filter(Boolean) as string[]))}
         onClose={() => setEditFinished(null)}
         onSave={handleSaveFinished}
       />
@@ -1087,6 +1158,7 @@ export default function StockPage() {
         <BarItemModal
           key={editBar ? (editBar.id ?? "new-bar") : "closed-bar"}
           item={editBar}
+          existingCategories={Array.from(new Set(barItems.map((b) => b.category).filter(Boolean) as string[]))}
           onClose={() => setEditBar(null)}
           onSave={handleSaveBar}
         />
