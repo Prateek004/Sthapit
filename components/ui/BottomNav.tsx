@@ -9,6 +9,7 @@ import {
   LayoutDashboard,
   LayoutGrid,
   Zap,
+  UtensilsCrossed,
 } from "lucide-react";
 import { useApp } from "@/lib/store/AppContext";
 
@@ -32,10 +33,12 @@ export default function BottomNav() {
       ? [{ href: "/tables", label: "Tables", Icon: LayoutGrid }]
       : []),
     { href: "/orders", label: "Orders", Icon: ClipboardList },
-    // Stock and Settings — owner only
+    // Menu — visible to owner and cashier (read-only for cashier)
+    { href: "/menu", label: "Menu", Icon: UtensilsCrossed },
+    // Inventory and Settings — owner only
     ...(isOwner
       ? [
-          { href: "/stock", label: "Stock", Icon: Package },
+          { href: "/stock", label: "Inventory", Icon: Package },
           { href: "/settings", label: "Settings", Icon: Settings },
         ]
       : []),
