@@ -37,7 +37,9 @@ import {
   QrCode,
   Banknote,
   Smartphone,
+  ClipboardList,
 } from "lucide-react";
+import { printKot } from "@/components/pos/CartPanel";
 
 // ── Table name helper ─────────────────────────────────────────────────────────
 
@@ -452,11 +454,36 @@ function TableCartPanel({
   holding,
   onDiscountTypeChange,
 }: CartPanelProps) {
-  const { updateItemQty, removeItem, setDiscount } = useTableStore();
+  const { updateItemQty, removeItem, setDiscount, markKotFired } = useTableStore();
   const { state: guardState, showToast: guardToast } = useApp();
   const order = useTableOrder(tableId);
   const [discountType, setDiscountType] = useState<"flat" | "percent">("flat");
   const [discountInput, setDiscountInput] = useState("");
+  const [firingKot, setFiringKot] = useState(false);
+
+  const kotEnabled = guardState.session?.stockSettings?.kotEnabled ?? false;
+
+  // Order/KOT: prints a KOT for the table's REAL, persisted items (order.items)
+  // — never a local snapshot — then marks it fired so the button reflects
+  // whether the current item set has already reached the kitchen.
+  const handlePrintKot = useCallback(async () => {
+    if (!order || order.items.length === 0) return;
+    setFiringKot(true);
+    try {
+      const kotRef = `KOT-T${tableNumber}-${Date.now().toString().slice(-6)}`;
+      printKot({
+        billNumber: kotRef,
+        tableNumber,
+        serviceMode: "dine_in",
+        items: order.items,
+        businessName: guardState.session?.businessName,
+      });
+      await markKotFired(tableId, false);
+      guardToast(`KOT printed for Table ${tableNumber} ✓`);
+    } finally {
+      setFiringKot(false);
+    }
+  }, [order, tableId, tableNumber, markKotFired, guardState.session?.businessName, guardToast]);
 
   const items = order?.items ?? [];
   const itemCount = items.reduce((s, i) => s + i.qty, 0);
@@ -684,6 +711,31 @@ function TableCartPanel({
             <span style={{ color: "#E8590C" }}>{fmtRupee(totalPaise)}</span>
           </div>
         </div>
+
+        {/* Print KOT — decoupled from Hold; always reflects order.items */}
+        {kotEnabled && (
+          <button
+            onClick={handlePrintKot}
+            disabled={firingKot}
+            className="w-full h-11 flex items-center justify-center gap-2 rounded-2xl border-2 font-bold text-sm press disabled:opacity-40"
+            style={{
+              borderColor: order?.kotFiredAt ? "#C9E4D1" : "#D6C4F0",
+              color: order?.kotFiredAt ? "#2D6A4F" : "#5B3E96",
+              background: order?.kotFiredAt ? "#EEF7F0" : "#F5F0FA",
+            }}
+          >
+            {firingKot ? (
+              <Loader2 size={16} className="animate-spin" />
+            ) : (
+              <ClipboardList size={16} />
+            )}
+            {firingKot
+              ? "Printing…"
+              : order?.kotFiredAt
+              ? `KOT Printed${order.kotAutoPlaced ? " (auto)" : ""} ✓ — Reprint`
+              : "Print KOT"}
+          </button>
+        )}
 
         {/* Hold */}
         <button
@@ -1566,12 +1618,37 @@ function MobileTableView({
   onCheckout: () => void;
 }) {
   const order = useTableOrder(tableId);
-  const { updateItemQty, removeItem } = useTableStore();
+  const { updateItemQty, removeItem, markKotFired } = useTableStore();
+  const { state: guardState, showToast: guardToast } = useApp();
   const [showCart, setShowCart] = useState(false);
+  const [firingKot, setFiringKot] = useState(false);
 
   const items = order?.items ?? [];
   const itemCount = items.reduce((s, i) => s + i.qty, 0);
   const totalPaise = order?.totalPaise ?? 0;
+  const kotEnabled = guardState.session?.stockSettings?.kotEnabled ?? false;
+
+  // Order/KOT: same fix as the desktop TableCartPanel — prints from the
+  // persisted order.items, never a local snapshot, and is fully independent
+  // of Hold Order below.
+  const handlePrintKot = useCallback(async () => {
+    if (!order || order.items.length === 0) return;
+    setFiringKot(true);
+    try {
+      const kotRef = `KOT-T${tableNumber}-${Date.now().toString().slice(-6)}`;
+      printKot({
+        billNumber: kotRef,
+        tableNumber,
+        serviceMode: "dine_in",
+        items: order.items,
+        businessName: guardState.session?.businessName,
+      });
+      await markKotFired(tableId, false);
+      guardToast(`KOT printed for Table ${tableNumber} ✓`);
+    } finally {
+      setFiringKot(false);
+    }
+  }, [order, tableId, tableNumber, markKotFired, guardState.session?.businessName, guardToast]);
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
@@ -1693,6 +1770,25 @@ function MobileTableView({
                 <span>Total</span>
                 <span style={{ color: "#E8590C" }}>{fmtRupee(totalPaise)}</span>
               </div>
+              {kotEnabled && (
+                <button
+                  onClick={handlePrintKot}
+                  disabled={firingKot}
+                  className="w-full h-11 flex items-center justify-center gap-2 rounded-2xl border-2 font-bold text-sm press disabled:opacity-40"
+                  style={{
+                    borderColor: order?.kotFiredAt ? "#C9E4D1" : "#D6C4F0",
+                    color: order?.kotFiredAt ? "#2D6A4F" : "#5B3E96",
+                    background: order?.kotFiredAt ? "#EEF7F0" : "#F5F0FA",
+                  }}
+                >
+                  {firingKot ? <Loader2 size={16} className="animate-spin" /> : <ClipboardList size={16} />}
+                  {firingKot
+                    ? "Printing…"
+                    : order?.kotFiredAt
+                    ? `KOT Printed${order.kotAutoPlaced ? " (auto)" : ""} ✓ — Reprint`
+                    : "Print KOT"}
+                </button>
+              )}
               <button
                 onClick={async () => { setShowCart(false); await onHold(); }}
                 disabled={holding}
