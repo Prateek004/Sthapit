@@ -131,6 +131,7 @@ export interface MenuCategory {
 export interface RawMaterial {
   id: string;
   name: string;
+  category?: string;
   unit: string;
   currentStock: number;
   minStock?: number;
@@ -192,6 +193,7 @@ export interface WastageEntry {
 export interface FinishedGood {
   id: string;
   name: string;
+  category?: string;
   quantity: number;
   unit: string;
   costPricePaise?: number;
