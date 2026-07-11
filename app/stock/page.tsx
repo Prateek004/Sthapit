@@ -358,6 +358,14 @@ function RawMaterialModal({
   const [minStock, setMinStock] = useState(item?.minStock != null ? String(item.minStock) : "");
   const [cost, setCost] = useState(item?.costPaise != null ? String(item.costPaise / 100) : "");
 
+  useEffect(() => {
+    setName(item?.name ?? "");
+    setUnit(item?.unit ?? "kg");
+    setStock(item?.currentStock != null ? String(item.currentStock) : "");
+    setMinStock(item?.minStock != null ? String(item.minStock) : "");
+    setCost(item?.costPaise != null ? String(item.costPaise / 100) : "");
+  }, [item]);
+
   const handleSave = () => {
     if (!name.trim()) return;
     onSave({
@@ -424,6 +432,15 @@ function FinishedGoodModal({
   const [selling, setSelling] = useState(item?.sellingPricePaise != null ? String(item.sellingPricePaise / 100) : "");
   const [expiry, setExpiry] = useState(item?.expiryDate ?? "");
   const today = new Date().toISOString().slice(0, 10);
+
+  useEffect(() => {
+    setName(item?.name ?? "");
+    setUnit(item?.unit ?? "piece");
+    setQty(item?.quantity != null ? String(item.quantity) : "");
+    setCost(item?.costPricePaise != null ? String(item.costPricePaise / 100) : "");
+    setSelling(item?.sellingPricePaise != null ? String(item.sellingPricePaise / 100) : "");
+    setExpiry(item?.expiryDate ?? "");
+  }, [item]);
 
   const handleSave = () => {
     if (!name.trim()) return;
@@ -497,6 +514,14 @@ function BarItemModal({
   const [qty, setQty] = useState(item?.quantity != null ? String(item.quantity) : "");
   const [cost, setCost] = useState(item?.costPricePaise != null ? String(item.costPricePaise / 100) : "");
   const [expiry, setExpiry] = useState(item?.expiryDate ?? "");
+
+  useEffect(() => {
+    setName(item?.name ?? "");
+    setUnit(item?.unit ?? "bottle");
+    setQty(item?.quantity != null ? String(item.quantity) : "");
+    setCost(item?.costPricePaise != null ? String(item.costPricePaise / 100) : "");
+    setExpiry(item?.expiryDate ?? "");
+  }, [item]);
 
   const handleSave = () => {
     if (!name.trim()) return;
