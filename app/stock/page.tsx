@@ -3,7 +3,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { useApp } from "@/lib/store/AppContext";
 import AppShell from "@/components/ui/AppShell";
 import Modal from "@/components/ui/Modal";
-import { fmtRupee, HIDE_FRANCHISE } from "@/lib/utils";
+import { fmtRupee, HIDE_FRANCHISE, todayStr, dateStrIST, isLowStock } from "@/lib/utils";
 import type { RawMaterial, FinishedGood } from "@/lib/types";
 import {
   Plus,
@@ -133,7 +133,7 @@ function FinishedGoodModal({
   const [cost, setCost] = useState(item?.costPricePaise != null ? String(item.costPricePaise / 100) : "");
   const [selling, setSelling] = useState(item?.sellingPricePaise != null ? String(item.sellingPricePaise / 100) : "");
   const [expiry, setExpiry] = useState(item?.expiryDate ?? "");
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayStr();
 
   useEffect(() => {
     setName(item?.name ?? "");
@@ -450,7 +450,7 @@ export default function StockPage() {
     showToast("Deleted");
   };
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayStr();
 
   const TABS: { id: StockTab; label: string; Icon: React.ElementType }[] = [
     { id: "raw",      label: "Raw Materials",  Icon: Package         },
@@ -512,7 +512,7 @@ export default function StockPage() {
                     <div key={cat} className="space-y-2">
                       {cats.length > 1 && <p className="text-xs font-bold text-gray-400 uppercase tracking-wider px-1 pt-2">{cat}</p>}
                       {grouped.get(cat)!.map((item) => {
-                        const isLow = item.minStock != null && item.currentStock <= item.minStock;
+                        const isLow = isLowStock(item);
                         return (
                           <div key={item.id} className="bg-white rounded-2xl shadow-sm p-4 flex items-center gap-3">
                             <div className="flex-1 min-w-0">
@@ -560,7 +560,7 @@ export default function StockPage() {
                       {cats.length > 1 && <p className="text-xs font-bold text-gray-400 uppercase tracking-wider px-1 pt-2">{cat}</p>}
                       {grouped.get(cat)!.map((item) => {
                         const expired = item.expiryDate && item.expiryDate < today;
-                        const expiringSoon = item.expiryDate && !expired && item.expiryDate <= new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10);
+                        const expiringSoon = item.expiryDate && !expired && item.expiryDate <= dateStrIST(new Date(Date.now() + 3 * 86400000));
                         return (
                           <div key={item.id} className={`bg-white rounded-2xl shadow-sm p-4 flex items-center gap-3 ${expired ? "border-2 border-red-200" : ""}`}>
                             <div className="flex-1 min-w-0">
