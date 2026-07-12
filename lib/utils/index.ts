@@ -120,7 +120,34 @@ export const fmtDate = (iso: string): string =>
     month: "short",
   });
 
-export const todayStr = (): string => new Date().toISOString().slice(0, 10);
+/** IST-safe calendar date (YYYY-MM-DD). Fixes UTC bucketing bug: orders placed
+ *  12:00-5:29 AM IST were counted in yesterday. en-CA locale gives YYYY-MM-DD. */
+const IST_DATE_FMT = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Kolkata",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+/** Convert any Date or ISO timestamp to its IST calendar date string. */
+export const dateStrIST = (d: Date | string = new Date()): string =>
+  IST_DATE_FMT.format(typeof d === "string" ? new Date(d) : d);
+
+export const todayStr = (): string => dateStrIST();
+
+/** THE single low-stock definition. Every screen must use this — never inline
+ *  a threshold multiplier again. Low = at or below the owner-set minStock. */
+export const isLowStock = (item: { currentStock: number; minStock?: number }): boolean =>
+  item.minStock != null && item.minStock > 0 && item.currentStock <= item.minStock;
+
+export const BUSINESS_TYPE_LABEL: Record<string, string> = {
+  cafe: "Cafe",
+  restaurant: "Restaurant",
+  food_truck: "Food Truck",
+  kiosk: "Kiosk",
+  bakery: "Bakery",
+  franchise: "Franchise",
+};
 
 export const QUICK_CASH = [50, 100, 200, 500, 1000, 2000];
 
