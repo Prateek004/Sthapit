@@ -4,7 +4,7 @@ import { useApp } from "@/lib/store/AppContext";
 import AppShell from "@/components/ui/AppShell";
 import Modal from "@/components/ui/Modal";
 import {
-  fmtRupee, fmtTime, fmtDate, todayStr,
+  fmtRupee, fmtTime, fmtDate, todayStr, dateStrIST,
   PAY_LABEL, SERVICE_LABEL, calcDiscount, calcGST, toP, QUICK_CASH,
 } from "@/lib/utils";
 import type { Order, OpenTable, CartItem, PaymentMethod } from "@/lib/types";
@@ -1009,7 +1009,7 @@ export default function OrdersPage() {
   }, [state.orders, uid]);
 
   const today       = todayStr();
-  const todayOrders = allOrders.filter((o) => o.createdAt.startsWith(today));
+  const todayOrders = allOrders.filter((o) => dateStrIST(o.createdAt) === today);
   const displayed   = filter === "today" ? todayOrders : allOrders;
   // P1-07: exclude voided orders from all revenue calculations
   const todaySales  = todayOrders.filter((o) => o.status !== "voided").reduce((s, o) => s + o.totalPaise, 0);
