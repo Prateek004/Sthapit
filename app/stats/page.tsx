@@ -2,7 +2,7 @@
 import { useState, useEffect } from "react";
 import { useApp } from "@/lib/store/AppContext";
 import AppShell from "@/components/ui/AppShell";
-import { fmtRupee, todayStr, PAY_LABEL } from "@/lib/utils";
+import { fmtRupee, todayStr, dateStrIST, PAY_LABEL } from "@/lib/utils";
 import type { Order } from "@/lib/types";
 import { TrendingUp, Banknote, ShoppingBag, Smartphone } from "lucide-react";
 
@@ -16,7 +16,7 @@ export default function StatsPage() {
   }, [state.orders, uid]);
 
   const today = todayStr();
-  const todayOrders = allOrders.filter((o) => o.createdAt.startsWith(today));
+  const todayOrders = allOrders.filter((o) => dateStrIST(o.createdAt) === today);
   const todaySales = todayOrders.reduce((s, o) => s + o.totalPaise, 0);
   const totalSales = allOrders.reduce((s, o) => s + o.totalPaise, 0);
   const avgOrder = allOrders.length > 0 ? Math.round(totalSales / allOrders.length) : 0;
