@@ -7,7 +7,7 @@ import SthappitChat from "@/components/ai/SthappitChat";
 import LeaksPanel from "@/components/ai/LeaksPanel";
 import InventoryTable from "@/components/ai/InventoryTable";
 import BillingTable from "@/components/ai/BillingTable";
-import { fmtRupee, todayStr } from "@/lib/utils";
+import { fmtRupee, todayStr, dateStrIST, isLowStock, BUSINESS_TYPE_LABEL } from "@/lib/utils";
 import { dbGetAllOrders, dbGetAllRawMaterials, dbGetAllMenuItems, dbGetWastage } from "@/lib/db";
 import { useRouter } from "next/navigation";
 import MenuMatrix from "@/components/ai/MenuMatrix";
@@ -54,10 +54,10 @@ export default function AiDashboardPage() {
       if (cancelled) return;
       const today = todayStr();
       const todayOrders = orders.filter(
-        (o) => o.createdAt.startsWith(today) && o.status !== "voided"
+        (o) => dateStrIST(o.createdAt) === today && o.status !== "voided"
       );
       const todayVoids = orders.filter(
-        (o) => o.createdAt.startsWith(today) && o.status === "voided"
+        (o) => dateStrIST(o.createdAt) === today && o.status === "voided"
       );
       const cutoff = Date.now() - THIRTY_DAYS_MS;
       const recent = orders.filter(
@@ -111,9 +111,7 @@ export default function AiDashboardPage() {
       : null;
   const costCoveragePct =
     totalUnits > 0 ? Math.round((coveredUnits / totalUnits) * 100) : 0;
-  const lowStockItems = rawMaterials.filter(
-    (r) => (r.minStock ?? 0) > 0 && r.currentStock <= (r.minStock ?? 0) * 1.5
-  );
+  const lowStockItems = rawMaterials.filter(isLowStock);
 
   // F4 v1 (manual): compose today's summary from real data and share via WhatsApp.
   const handleShareSummary = () => {
@@ -268,7 +266,7 @@ export default function AiDashboardPage() {
                   <div style={{ fontSize: 16, color: "white" }}>
                     {state.session?.businessName ?? ""}
                   </div>
-                  <div style={{ fontSize: 12, color: "#4A6A58" }}>Karol Bagh, Delhi · North Indian</div>
+                  <div style={{ fontSize: 12, color: "#4A6A58" }}>{BUSINESS_TYPE_LABEL[state.session?.businessType ?? ""] ?? "F&B Business"}</div>
                 </div>
                 <button
                   onClick={handleShareSummary}
