@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from "react";
 import { useApp } from "@/lib/store/AppContext";
 import AppShell from "@/components/ui/AppShell";
-import { fmtRupee, todayStr, PAY_LABEL } from "@/lib/utils";
+import { fmtRupee, todayStr, dateStrIST, PAY_LABEL } from "@/lib/utils";
 import type { Order } from "@/lib/types";
 import { Banknote, Smartphone, ShoppingBag, Bell, Printer } from "lucide-react";
 
@@ -64,7 +64,7 @@ export default function DashboardPage() {
   }, [state.orders, uid]);
 
   const today = todayStr();
-  const todayOrders = allOrders.filter((o) => o.createdAt.startsWith(today));
+  const todayOrders = allOrders.filter((o) => dateStrIST(o.createdAt) === today);
   // P1-07: exclude voided orders from all revenue
   const todayValid = todayOrders.filter((o) => o.status !== "voided");
   const allValid   = allOrders.filter((o) => o.status !== "voided");
