@@ -2,7 +2,7 @@
 import React, { useState, useMemo } from "react";
 import { useApp } from "@/lib/store/AppContext";
 import AppShell from "@/components/ui/AppShell";
-import { fmtRupee } from "@/lib/utils";
+import { fmtRupee, dateStrIST } from "@/lib/utils";
 import { dbGetAllOrders } from "@/lib/db";
 import type { Order } from "@/lib/types";
 import { Upload, Loader2, AlertTriangle, CheckCircle } from "lucide-react";
@@ -128,8 +128,8 @@ export default function ReconcilePage() {
         (o) =>
           o.serviceMode === "delivery" &&
           o.status !== "voided" &&
-          o.createdAt.slice(0, 10) >= from &&
-          o.createdAt.slice(0, 10) <= to
+          dateStrIST(o.createdAt) >= from &&
+          dateStrIST(o.createdAt) <= to
       );
       setDeliveryOrders(delivery);
     } finally {
