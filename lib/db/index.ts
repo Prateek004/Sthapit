@@ -299,9 +299,10 @@ export async function dbGetAllOrders(uid: string): Promise<Order[]> {
 export async function dbGetTodaysOrders(uid: string): Promise<Order[]> {
   try {
     const db = await getDB();
-    const today = new Date().toISOString().slice(0, 10);
+    const { todayStr, dateStrIST } = await import("@/lib/utils");
+    const today = todayStr();
     const all = await db.orders.where("_uid").equals(uid).toArray();
-    return all.filter((o) => o.createdAt.startsWith(today)) as unknown as Order[];
+    return all.filter((o) => dateStrIST(o.createdAt) === today) as unknown as Order[];
   } catch {
     recordIdbError();
     return [];
