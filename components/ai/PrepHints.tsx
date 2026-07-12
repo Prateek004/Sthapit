@@ -2,6 +2,7 @@
 import React, { useMemo } from "react";
 import type { Order } from "@/lib/types";
 import { CalendarDays, Info } from "lucide-react";
+import { todayStr } from "@/lib/utils";
 
 /**
  * G7 v1 — Prep Hints: same-weekday demand averages.
@@ -40,7 +41,7 @@ const WEEKDAY_LABELS = [
 export default function PrepHints({ orders }: Props) {
   const todayDow = new Date().getDay();
   const todayLabel = WEEKDAY_LABELS[todayDow];
-  const todayKey = new Date().toISOString().slice(0, 10);
+  const todayKey = todayStr();
 
   const { rows, weekdayCount } = useMemo(() => {
     // Group past same-weekday orders by calendar date (exclude today —
