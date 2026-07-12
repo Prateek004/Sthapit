@@ -1,4 +1,5 @@
 import { Order, RawMaterial, MenuItem, WastageEntry } from "@/lib/types";
+import { isLowStock } from "@/lib/utils";
 
 /**
  * STHAPPIT Confidence Framework — 5 levels (Section E of strategy doc).
@@ -125,7 +126,7 @@ export function detectLeaks(
 
   // RULE 4 — low_stock
   const lowItems = rawMaterials.filter(
-    (r) => (r.minStock ?? 0) > 0 && r.currentStock <= (r.minStock ?? 0) * 1.2
+    (r) => isLowStock(r)
   );
   if (lowItems.length > 0) {
     const impactPaise = lowItems.length * 50000;
