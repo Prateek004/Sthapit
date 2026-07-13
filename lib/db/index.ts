@@ -670,6 +670,39 @@ export async function dbAtomicUpdateTableOrder(
   }
 }
 
+/**
+ * Atomic multi-row raw material deduction for a completed sale (stockEngine).
+ * Every decrement for one sale happens inside a SINGLE Dexie 'rw' transaction,
+ * so a mid-write crash can never leave half a sale's ingredients deducted.
+ * Stock is clamped at 0 — the theoretical ledger may drift above reality but
+ * is never allowed to go negative. Unknown ids and other tenants' rows are
+ * skipped silently (recipe may reference a since-deleted material).
+ */
+export async function dbAtomicDeductRawMaterials(
+  uid: string,
+  deductions: Record<string, number>
+): Promise<void> {
+  const ids = Object.keys(deductions);
+  if (ids.length === 0) return;
+  try {
+    const db = await getDB();
+    await db.transaction("rw", db.rawMaterials, async () => {
+      const now = new Date().toISOString();
+      for (const id of ids) {
+        const qty = deductions[id];
+        if (!(qty > 0)) continue; // ignore zero/negative/NaN deductions
+        const rec = await db.rawMaterials.get(id);
+        if (!rec || rec._uid !== uid) continue;
+        const nextStock = Math.max(0, (rec.currentStock ?? 0) - qty);
+        await db.rawMaterials.put({ ...rec, currentStock: nextStock, updatedAt: now });
+      }
+    });
+  } catch (err) {
+    recordIdbError();
+    throw err;
+  }
+}
+
 // ── Leak Actions (Profit AI — Resolve/Snooze) ────────────────────────────────
 export async function dbGetLeakActions(uid: string): Promise<LeakAction[]> {
   try {
