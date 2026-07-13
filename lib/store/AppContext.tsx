@@ -1111,6 +1111,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
           .then(({ syncOrder }) => syncOrder(order, businessId))
           .catch(() => {});
 
+        // Stock ledger: deduct recipe ingredients + manual pre-prepared pools.
+        // Fire-and-forget — the sale is already durably saved; a stock-ledger
+        // problem must never fail or delay the bill.
+        import("@/lib/utils/stockEngine")
+          .then(({ deductStockForOrder }) =>
+            deductStockForOrder(
+              businessId,
+              snap.map((i) => ({
+                menuItemId: i.menuItemId,
+                name: i.name,
+                qty: i.qty,
+              }))
+            )
+          )
+          .catch(() => {});
+
         return order;
       } finally {
         placeOrderInFlight.current = false;
@@ -1344,6 +1360,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         import("@/lib/supabase/sync")
           .then(({ syncOrder }) => syncOrder(order, businessId))
+          .catch(() => {});
+
+        // Stock ledger: same single deduction path as placeOrder — the sale
+        // is durably saved; a ledger problem must never fail the close.
+        import("@/lib/utils/stockEngine")
+          .then(({ deductStockForOrder }) =>
+            deductStockForOrder(
+              businessId,
+              tab.items.map((i) => ({
+                menuItemId: i.menuItemId,
+                name: i.name,
+                qty: i.qty,
+              }))
+            )
+          )
           .catch(() => {});
 
         return order;
