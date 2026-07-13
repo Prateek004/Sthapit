@@ -109,6 +109,17 @@ export interface AddOn {
   pricePaise: number;
 }
 
+/** Manual pre-prepared stock pool for a menu item (stockEngine). An
+ *  owner-entered count of ready-to-serve portions (e.g. "12 pre-cut paneer
+ *  portions") that bypasses the recipe-based raw-material check until it
+ *  runs out. Deducted per sale by deductStockForSale(); the item is
+ *  auto-marked unavailable when the pool reaches 0. */
+export interface ManualStockOverride {
+  /** Ready-to-serve portions remaining. Never negative. */
+  portionsAvailable: number;
+  updatedAt?: string;
+}
+
 export interface MenuItem {
   id: string;
   name: string;
@@ -122,6 +133,7 @@ export interface MenuItem {
   portionEnabled?: boolean;
   portions?: { label: string; pricePaise: number }[];
   fastAdd?: boolean;
+  manualStockOverride?: ManualStockOverride;
   updatedAt?: string;
 }
 
@@ -155,23 +167,6 @@ export interface LeakAction {
   updatedAt: string;
 }
 
-
-/** G2 Recipe/BOM: how much of each raw material one unit (plate) of a menu
- *  item consumes. Approximate values are fine — the consumption engine labels
- *  its outputs as theoretical. Recipe.id === menuItemId (one recipe per item). */
-export interface RecipeIngredient {
-  rawMaterialId: string;
-  /** Quantity of the raw material consumed per ONE unit sold, in the raw
-   *  material's own unit (kg, L, pcs …). */
-  qtyPerUnit: number;
-}
-
-export interface Recipe {
-  /** Same as the menu item id */
-  id: string;
-  ingredients: RecipeIngredient[];
-  updatedAt: string;
-}
 
 /** G4 Wastage Tracker: one logged waste event. 3-tap entry, never mandatory.
  *  valuePaise is computed from known cost data when available, else owner-entered. */
