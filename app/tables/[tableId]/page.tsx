@@ -956,6 +956,22 @@ function CheckoutSheet({
       const { dbSaveOrder } = await import("@/lib/db");
       await dbSaveOrder(finalOrder, businessId);
 
+      // Stock ledger: deduct recipe ingredients + manual pre-prepared pools.
+      // Fire-and-forget — the bill is already durably saved; a stock-ledger
+      // problem must never fail or delay the settle.
+      import("@/lib/utils/stockEngine")
+        .then(({ deductStockForOrder }) =>
+          deductStockForOrder(
+            businessId,
+            finalOrder.items.map((i) => ({
+              menuItemId: i.menuItemId,
+              name: i.name,
+              qty: i.qty,
+            }))
+          )
+        )
+        .catch(() => {});
+
       notifyOrderPlaced(finalOrder);
       await clearOrder(tableId);
 
