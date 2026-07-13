@@ -1,5 +1,10 @@
 import type { MenuItem, Recipe, RawMaterial } from "@/lib/types";
-import { dbAtomicDeductRawMaterials, dbSaveMenuItem } from "@/lib/db";
+import {
+  dbAtomicDeductRawMaterials,
+  dbSaveMenuItem,
+  dbGetAllRecipes,
+  dbGetAllMenuItems,
+} from "@/lib/db";
 
 /**
  * Inventory Sprint 1 — Real-Time POS Inventory Validation.
@@ -189,4 +194,30 @@ export async function deductStockForSale(
     );
   });
   await Promise.all(overrideUpdates);
+}
+
+/**
+ * Convenience wrapper used by checkout flows (POS quick billing + table
+ * settle). Loads the business's recipes and menu items from IDB itself, then
+ * runs deductStockForSale — so call sites stay one line and there is exactly
+ * ONE deduction code path in the app. Fire-and-forget by design: any failure
+ * is logged and swallowed, because the bill is already durably saved and must
+ * never be affected by a stock-ledger hiccup.
+ */
+export async function deductStockForOrder(
+  businessId: string,
+  lines: LineItem[]
+): Promise<void> {
+  try {
+    if (lines.length === 0) return;
+    const [recipes, menuItems] = await Promise.all([
+      dbGetAllRecipes(businessId),
+      dbGetAllMenuItems(businessId),
+    ]);
+    // Nothing tracked → nothing to do (the common case for new businesses).
+    if (recipes.length === 0 && !menuItems.some((m) => m.manualStockOverride)) return;
+    await deductStockForSale(businessId, lines, recipes, menuItems);
+  } catch (err) {
+    console.error("[stockEngine] deductStockForOrder failed", err);
+  }
 }
