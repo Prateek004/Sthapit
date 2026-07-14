@@ -24,6 +24,13 @@ import {
 
 export type LineItem = { menuItemId: string; name: string; qty: number };
 
+/** Browser event fired after any deduction so open UIs (POS tiles) can
+ *  refresh their stock badges without polling. */
+export const STOCK_UPDATED_EVENT = "sth1r-stock-updated";
+
+/** Tiles show an "Only N left" badge at or below this remaining count. */
+export const LOW_STOCK_BADGE_THRESHOLD = 5;
+
 export interface StockShortfall {
   menuItemId: string;
   name: string;
@@ -217,6 +224,9 @@ export async function deductStockForOrder(
     // Nothing tracked → nothing to do (the common case for new businesses).
     if (recipes.length === 0 && !menuItems.some((m) => m.manualStockOverride)) return;
     await deductStockForSale(businessId, lines, recipes, menuItems);
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new Event(STOCK_UPDATED_EVENT));
+    }
   } catch (err) {
     console.error("[stockEngine] deductStockForOrder failed", err);
   }
