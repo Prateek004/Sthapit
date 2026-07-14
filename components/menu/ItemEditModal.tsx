@@ -32,6 +32,12 @@ export default function ItemEditModal({
   const [addOns, setAddOns] = useState<AddOn[]>(item?.addOns ?? []);
   const [aoName, setAoName] = useState("");
   const [aoPrice, setAoPrice] = useState("");
+  // Sprint 3: manual pre-prepared stock pool. Empty string = tracking off.
+  const [prepPool, setPrepPool] = useState(
+    item?.manualStockOverride != null
+      ? String(item.manualStockOverride.portionsAvailable)
+      : ""
+  );
 
   const updatePortion = (idx: number, field: "label" | "price", val: string) => {
     setPortions((prev) =>
@@ -57,6 +63,12 @@ export default function ItemEditModal({
 
   const handleSave = () => {
     if (!name.trim() || !catId) return;
+    // Sprint 3: empty input = tracking off (undefined). A value (including 0)
+    // sets the pool; 0 means sold out — the POS shows "No stock" and warns at
+    // checkout. Negative/garbage input clamps to 0.
+    const poolRaw = prepPool.trim();
+    const poolNum =
+      poolRaw === "" ? null : Math.max(0, Math.floor(Number(poolRaw)) || 0);
     onSave({
       id: item?.id ?? crypto.randomUUID(),
       name: name.trim(),
@@ -70,6 +82,13 @@ export default function ItemEditModal({
       addOns,
       sizes: item?.sizes ?? [],
       fastAdd: item?.fastAdd,
+      manualStockOverride:
+        poolNum === null
+          ? undefined
+          : {
+              portionsAvailable: poolNum,
+              updatedAt: new Date().toISOString(),
+            },
     });
   };
 
@@ -165,6 +184,30 @@ export default function ItemEditModal({
               </button>
             </div>
           </div>
+        </div>
+        <div className="bg-gray-50 rounded-2xl p-4 space-y-3">
+          <div>
+            <p className="text-sm font-bold text-gray-700">Pre-prepared stock <span className="font-normal text-gray-400">optional</span></p>
+            <p className="text-xs text-gray-400">
+              Ready-to-serve portions (e.g. 12 pre-cut paneer portions). Counts down with each sale;
+              the item auto-turns unavailable at 0. Leave blank to switch this off.
+              Items with a pool skip the recipe-based stock check.
+            </p>
+          </div>
+          <input
+            type="number"
+            min="0"
+            step="1"
+            className="bm-input"
+            placeholder="e.g. 12 (blank = off)"
+            value={prepPool}
+            onChange={(e) => setPrepPool(e.target.value)}
+          />
+          {prepPool.trim() !== "" && Number(prepPool) === 0 && (
+            <p className="text-xs font-semibold text-amber-600">
+              Pool is 0 — this item will show &quot;No stock&quot; on the POS. Set a count and switch Available on to sell it again.
+            </p>
+          )}
         </div>
         <button onClick={handleSave} disabled={!name.trim() || !catId} className="w-full h-12 bg-primary-500 text-white rounded-2xl font-bold disabled:opacity-40 press shadow-md mt-2">
           {isNew ? "Add Item" : "Save Changes"}
