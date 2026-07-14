@@ -2,6 +2,8 @@
 import { useApp } from "@/lib/store/AppContext";
 import type { MenuItem } from "@/lib/types";
 import { fmtRupee } from "@/lib/utils";
+import { useStockRemaining } from "@/lib/hooks/useStockBadges";
+import { LOW_STOCK_BADGE_THRESHOLD } from "@/lib/utils/stockEngine";
 import { Plus, Minus, CheckCircle2 } from "lucide-react";
 
 interface Props {
@@ -16,6 +18,13 @@ export default function MenuItemCard({
   compact = false,
 }: Props) {
   const { state, addToCart, updateCartQty, showToast } = useApp();
+
+  // Sprint 3: remaining servable portions (null = untracked, no badge shown).
+  // Cosmetic only — tiles stay tappable; the hard/soft gate is at checkout.
+  const remaining = useStockRemaining(item, state.session?.businessId);
+  const outOfStock = remaining !== null && remaining <= 0;
+  const lowStock =
+    remaining !== null && remaining > 0 && remaining <= LOW_STOCK_BADGE_THRESHOLD;
 
   // Total qty of this item across all cart entries (different customisations)
   const cartEntries = state.cart.filter((c) => c.menuItemId === item.id);
@@ -108,12 +117,22 @@ export default function MenuItemCard({
             </span>
             <span
               className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${
-                item.isAvailable
-                  ? "bg-green-100 text-green-700"
-                  : "bg-gray-100 text-gray-500"
+                !item.isAvailable
+                  ? "bg-gray-100 text-gray-500"
+                  : outOfStock
+                  ? "bg-red-100 text-red-600"
+                  : lowStock
+                  ? "bg-amber-100 text-amber-700"
+                  : "bg-green-100 text-green-700"
               }`}
             >
-              {item.isAvailable ? "In Stock" : "Out"}
+              {!item.isAvailable
+                ? "Out"
+                : outOfStock
+                ? "No stock"
+                : lowStock
+                ? `Only ${remaining} left`
+                : "In Stock"}
             </span>
           </div>
           <p className={`text-xs font-bold leading-tight line-clamp-2 min-h-[2rem] ${!item.isAvailable ? "text-gray-400 line-through" : "text-gray-900"}`}>
@@ -209,6 +228,15 @@ export default function MenuItemCard({
         {!item.isAvailable && (
           <span className="text-[9px] text-gray-400 font-bold uppercase tracking-wide">
             Unavailable
+          </span>
+        )}
+        {item.isAvailable && (outOfStock || lowStock) && (
+          <span
+            className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${
+              outOfStock ? "bg-red-100 text-red-600" : "bg-amber-100 text-amber-700"
+            }`}
+          >
+            {outOfStock ? "No stock" : `Only ${remaining} left`}
           </span>
         )}
         {hasOptions && item.isAvailable && (
