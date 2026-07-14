@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef } from "react";
 import Modal from "@/components/ui/Modal";
 import { useApp } from "@/lib/store/AppContext";
 import type { PaymentMethod, Order } from "@/lib/types";
+import type { StockShortfall } from "@/lib/utils/stockEngine";
 import { fmtRupee, fmtDate, toP, QUICK_CASH } from "@/lib/utils";
 import { printKot } from "@/components/pos/CartPanel";
 import {
@@ -15,6 +16,7 @@ import {
   X,
   Loader2,
   ClipboardList,
+  AlertTriangle,
 } from "lucide-react";
 
 interface Props {
@@ -72,6 +74,11 @@ export default function CheckoutModal({
   const [showUpiQr, setShowUpiQr] = useState(false);
   const [kotFired, setKotFired] = useState(false);
   const invoiceRef = useRef<HTMLDivElement>(null);
+  // Sprint 3: stock pre-flight. Warnings shown to owners, who proceed with a
+  // second tap; cashiers are hard-blocked. Ref mirrors the state so the
+  // second tap can skip the re-check without a stale-closure race.
+  const [stockWarnings, setStockWarnings] = useState<StockShortfall[] | null>(null);
+  const stockAcknowledgedRef = useRef(false);
 
   // Reset all state whenever modal opens
   useEffect(() => {
@@ -86,6 +93,8 @@ export default function CheckoutModal({
       setQrSrc("");
       setShowUpiQr(false);
       setKotFired(false);
+      setStockWarnings(null);
+      stockAcknowledgedRef.current = false;
       setPostTab(kotEnabled ? "kot" : "invoice");
     }
   }, [open, kotEnabled]);
@@ -167,6 +176,52 @@ export default function CheckoutModal({
     }
     placingRef.current = true; // P0-06: block any concurrent tap before state update
     setPlacing(true);
+
+    // ── Sprint 3: stock pre-flight ────────────────────────────────────────
+    // Checks cart lines against recipes + manual pools BEFORE billing.
+    // Cashiers: hard-blocked. Owners: warned once, second tap proceeds.
+    // The check itself must NEVER break billing — any error skips it.
+    if (!stockAcknowledgedRef.current) {
+      let shortfalls: StockShortfall[] = [];
+      try {
+        const businessId = session?.businessId ?? "default";
+        const [db, stockEngine] = await Promise.all([
+          import("@/lib/db"),
+          import("@/lib/utils/stockEngine"),
+        ]);
+        const [recipes, materials, menuItems] = await Promise.all([
+          db.dbGetAllRecipes(businessId),
+          db.dbGetAllRawMaterials(businessId),
+          db.dbGetAllMenuItems(businessId),
+        ]);
+        shortfalls = stockEngine.checkStock(
+          cart.map((c) => ({ menuItemId: c.menuItemId, name: c.name, qty: c.qty })),
+          recipes,
+          materials,
+          menuItems
+        );
+      } catch {
+        shortfalls = []; // stock check failure must never block a sale
+      }
+      if (shortfalls.length > 0) {
+        placingRef.current = false;
+        setPlacing(false);
+        if (session?.role === "cashier") {
+          const f = shortfalls[0];
+          showToast(
+            `Not enough stock: ${f.name} — only ${f.availableQty} can be made. Ask the owner.`,
+            "error"
+          );
+          return;
+        }
+        setStockWarnings(shortfalls);
+        stockAcknowledgedRef.current = true; // owner's next tap proceeds
+        return;
+      }
+    }
+    stockAcknowledgedRef.current = false;
+    setStockWarnings(null);
+
     try {
       const placed = await placeOrder({
         paymentMethod: method,
@@ -549,13 +604,40 @@ export default function CheckoutModal({
             </div>
           )}
 
+          {/* Sprint 3: owner stock warning — second tap proceeds anyway */}
+          {stockWarnings && stockWarnings.length > 0 && (
+            <div className="rounded-2xl border-2 border-amber-300 bg-amber-50 p-3 space-y-1.5">
+              <div className="flex items-center gap-2">
+                <AlertTriangle size={15} className="text-amber-600 shrink-0" />
+                <p className="text-sm font-black text-amber-800">Low stock warning</p>
+              </div>
+              {stockWarnings.map((s) => (
+                <p key={s.menuItemId} className="text-xs font-semibold text-amber-700">
+                  {s.name}: need {s.requestedQty}, only {s.availableQty} can be made
+                  {s.limitingIngredient ? ` (short on ${s.limitingIngredient})` : ""}
+                </p>
+              ))}
+              <p className="text-xs text-amber-600">
+                Tap Confirm again to bill anyway — stock will go to 0.
+              </p>
+            </div>
+          )}
+
           <button
             disabled={!canConfirm}
             onClick={handleConfirm}
-            className="w-full h-14 bg-primary-500 text-white rounded-2xl font-black text-lg disabled:opacity-40 press shadow-md flex items-center justify-center gap-2"
+            className={`w-full h-14 text-white rounded-2xl font-black text-lg disabled:opacity-40 press shadow-md flex items-center justify-center gap-2 ${
+              stockWarnings && stockWarnings.length > 0
+                ? "bg-amber-500"
+                : "bg-primary-500"
+            }`}
           >
             {placing && <Loader2 size={18} className="animate-spin" />}
-            {placing ? "Processing…" : `Confirm · ${fmtRupee(totalPaise)}`}
+            {placing
+              ? "Processing…"
+              : stockWarnings && stockWarnings.length > 0
+              ? `Confirm Anyway · ${fmtRupee(totalPaise)}`
+              : `Confirm · ${fmtRupee(totalPaise)}`}
           </button>
         </div>
       </Modal>
