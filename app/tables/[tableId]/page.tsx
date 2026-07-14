@@ -12,6 +12,9 @@ import { useApp } from "@/lib/store/AppContext";
 import { useTableStore, useTableOrder } from "@/lib/store/tableStore";
 import AppShell from "@/components/ui/AppShell";
 import type { MenuItem, AddOn, Order, PaymentMethod } from "@/lib/types";
+import type { StockShortfall } from "@/lib/utils/stockEngine";
+import { LOW_STOCK_BADGE_THRESHOLD } from "@/lib/utils/stockEngine";
+import { useStockRemaining } from "@/lib/hooks/useStockBadges";
 import {
   fmtRupee,
   calcDiscount,
@@ -38,6 +41,7 @@ import {
   Banknote,
   Smartphone,
   ClipboardList,
+  AlertTriangle,
 } from "lucide-react";
 import { printKot } from "@/components/pos/CartPanel";
 
@@ -179,6 +183,14 @@ function MenuItemTile({
   item: MenuItem;
   onPress: () => void;
 }) {
+  const { state } = useApp();
+  // Sprint 4: same badge rules as the POS grid — cosmetic only, tile stays
+  // tappable; the owner/cashier gate lives in CheckoutSheet.
+  const remaining = useStockRemaining(item, state.session?.businessId);
+  const outOfStock = remaining !== null && remaining <= 0;
+  const lowStock =
+    remaining !== null && remaining > 0 && remaining <= LOW_STOCK_BADGE_THRESHOLD;
+
   return (
     <button
       onClick={onPress}
@@ -203,6 +215,17 @@ function MenuItemTile({
             style={{ background: item.isVeg ? "#2D6A4F" : "#C0392B" }}
           />
         </span>
+        {(outOfStock || lowStock) && (
+          <span
+            className="text-[9px] font-bold px-1.5 py-0.5 rounded-full ml-auto"
+            style={{
+              background: outOfStock ? "#FDECEA" : "#FFF8EC",
+              color: outOfStock ? "#C0392B" : "#B07D00",
+            }}
+          >
+            {outOfStock ? "No stock" : `Only ${remaining} left`}
+          </span>
+        )}
       </div>
       <p
         className="text-xs font-bold leading-tight line-clamp-2 flex-1"
@@ -829,6 +852,10 @@ function CheckoutSheet({
   const [qrLoading, setQrLoading] = useState(false);
   const [showUpiQr, setShowUpiQr] = useState(false);
   const invoiceRef = useRef<HTMLDivElement>(null);
+  // Sprint 4: settle-time stock gate — same rules as the POS CheckoutModal.
+  // Owners get a warning and proceed on the second tap; cashiers are blocked.
+  const [stockWarnings, setStockWarnings] = useState<StockShortfall[] | null>(null);
+  const stockAcknowledgedRef = useRef(false);
 
   const hasUpi = Boolean(upiId);
   const items = order?.items ?? [];
@@ -905,6 +932,55 @@ function CheckoutSheet({
         );
         return;
       }
+
+      // ── Sprint 4: settle-time stock pre-flight ──────────────────────────
+      // Runs against the FRESH items being billed. Cashiers: hard-blocked.
+      // Owners: warned once, second tap settles anyway. The check must
+      // NEVER break settling — any error skips it. Guards are released
+      // manually on every early return (this function has no finally).
+      if (!stockAcknowledgedRef.current) {
+        let shortfalls: StockShortfall[] = [];
+        try {
+          const [dbMod, stockEngine] = await Promise.all([
+            import("@/lib/db"),
+            import("@/lib/utils/stockEngine"),
+          ]);
+          const [recipes, materials, menuItemsAll] = await Promise.all([
+            dbMod.dbGetAllRecipes(businessId),
+            dbMod.dbGetAllRawMaterials(businessId),
+            dbMod.dbGetAllMenuItems(businessId),
+          ]);
+          shortfalls = stockEngine.checkStock(
+            freshItems.map((i) => ({
+              menuItemId: i.menuItemId,
+              name: i.name,
+              qty: i.qty,
+            })),
+            recipes,
+            materials,
+            menuItemsAll
+          );
+        } catch {
+          shortfalls = []; // stock check failure must never block settling
+        }
+        if (shortfalls.length > 0) {
+          placingRef.current = false;
+          setPlacing(false);
+          if (appState.session?.role === "cashier") {
+            const f = shortfalls[0];
+            showToast(
+              `Not enough stock: ${f.name} — only ${f.availableQty} can be made. Ask the owner.`,
+              "error"
+            );
+            return;
+          }
+          setStockWarnings(shortfalls);
+          stockAcknowledgedRef.current = true; // owner's next tap proceeds
+          return;
+        }
+      }
+      stockAcknowledgedRef.current = false;
+      setStockWarnings(null);
 
       let billNumber = generateBillNumber();
       try {
@@ -1389,14 +1465,45 @@ function CheckoutSheet({
         </div>
 
         <div className="px-5 pb-5 pt-2 border-t" style={{ borderColor: "#F0E8DF" }}>
+          {/* Sprint 4: owner stock warning — second tap settles anyway */}
+          {stockWarnings && stockWarnings.length > 0 && (
+            <div
+              className="rounded-2xl border-2 p-3 space-y-1.5 mb-3"
+              style={{ borderColor: "#F5D48A", background: "#FFF8EC" }}
+            >
+              <div className="flex items-center gap-2">
+                <AlertTriangle size={15} style={{ color: "#B07D00" }} className="shrink-0" />
+                <p className="text-sm font-black" style={{ color: "#7A4D00" }}>
+                  Low stock warning
+                </p>
+              </div>
+              {stockWarnings.map((s) => (
+                <p key={s.menuItemId} className="text-xs font-semibold" style={{ color: "#8A5A00" }}>
+                  {s.name}: need {s.requestedQty}, only {s.availableQty} can be made
+                  {s.limitingIngredient ? ` (short on ${s.limitingIngredient})` : ""}
+                </p>
+              ))}
+              <p className="text-xs" style={{ color: "#B07D00" }}>
+                Tap the button again to bill anyway — stock will go to 0.
+              </p>
+            </div>
+          )}
           <button
             disabled={!canConfirm}
             onClick={handleConfirm}
             className="w-full h-14 rounded-2xl font-black text-lg disabled:opacity-40 press shadow-md flex items-center justify-center gap-2"
-            style={{ background: "#E8590C", color: "white" }}
+            style={{
+              background:
+                stockWarnings && stockWarnings.length > 0 ? "#D97706" : "#E8590C",
+              color: "white",
+            }}
           >
             {placing && <Loader2 size={18} className="animate-spin" />}
-            {placing ? "Processing…" : `Collect & Close · ${fmtRupee(totalPaise)}`}
+            {placing
+              ? "Processing…"
+              : stockWarnings && stockWarnings.length > 0
+              ? `Collect Anyway · ${fmtRupee(totalPaise)}`
+              : `Collect & Close · ${fmtRupee(totalPaise)}`}
           </button>
         </div>
       </div>
