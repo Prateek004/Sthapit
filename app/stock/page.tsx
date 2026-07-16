@@ -4,7 +4,8 @@ import { useApp } from "@/lib/store/AppContext";
 import AppShell from "@/components/ui/AppShell";
 import Modal from "@/components/ui/Modal";
 import { fmtRupee, HIDE_FRANCHISE, todayStr, dateStrIST, isLowStock } from "@/lib/utils";
-import type { RawMaterial, FinishedGood } from "@/lib/types";
+import { UNIT_DEFS, getUnitDef, costPerUnitPaise, effectiveUnitCostPaise } from "@/lib/utils/units";
+import type { RawMaterial, FinishedGood, StockCategory, StockCategoryKind } from "@/lib/types";
 import {
   Plus,
   Pencil,
@@ -13,14 +14,17 @@ import {
   Package,
   Boxes,
   Wine,
+  Settings2,
+  X,
 } from "lucide-react";
 
-const UNITS = ["kg", "g", "litre", "ml", "piece", "dozen", "bottle", "pack", "box"];
 const BAR_BIZ = ["cafe", "restaurant", "franchise"].filter(
   (t) => !HIDE_FRANCHISE || t !== "franchise"
 );
 
 type StockTab = "raw" | "finished" | "bar";
+
+const CUSTOM_UNIT = "__custom__";
 
 function EmptyState({ icon, label, sub }: { icon: string; label: string; sub: string }) {
   return (
@@ -32,16 +36,183 @@ function EmptyState({ icon, label, sub }: { icon: string; label: string; sub: st
   );
 }
 
+/** Unit dropdown backed by the canonical registry, with a Custom option
+ *  that reveals a free-text input. Legacy/custom unit values on existing
+ *  items are shown as the custom text so nothing ever renders blank. */
+function UnitSelect({ value, onChange }: { value: string; onChange: (u: string) => void }) {
+  const isKnown = UNIT_DEFS.some((u) => u.id === value);
+  const [customMode, setCustomMode] = useState(!isKnown && value !== "");
+  return (
+    <div className="space-y-2">
+      <select
+        className="bm-input"
+        value={customMode ? CUSTOM_UNIT : value}
+        onChange={(e) => {
+          if (e.target.value === CUSTOM_UNIT) {
+            setCustomMode(true);
+            onChange("");
+          } else {
+            setCustomMode(false);
+            onChange(e.target.value);
+          }
+        }}
+      >
+        {UNIT_DEFS.map((u) => (
+          <option key={u.id} value={u.id}>{u.label}</option>
+        ))}
+        <option value={CUSTOM_UNIT}>Custom…</option>
+      </select>
+      {customMode && (
+        <input
+          className="bm-input"
+          placeholder="Custom unit e.g. scoop, can"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Category dropdown fed by the persisted stockCategories store, with an
+ *  inline "+ New category" flow. Selecting nothing = Uncategorised. */
+function CategorySelect({
+  value,
+  categories,
+  onChange,
+  onCreate,
+}: {
+  value: string;
+  categories: StockCategory[];
+  onChange: (name: string) => void;
+  onCreate: (name: string) => Promise<void>;
+}) {
+  const NEW = "__new__";
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState("");
+  const inList = value === "" || categories.some((c) => c.name === value);
+  return (
+    <div className="space-y-2">
+      <select
+        className="bm-input"
+        value={adding ? NEW : value}
+        onChange={(e) => {
+          if (e.target.value === NEW) {
+            setAdding(true);
+            setDraft("");
+          } else {
+            setAdding(false);
+            onChange(e.target.value);
+          }
+        }}
+      >
+        <option value="">Uncategorised</option>
+        {categories.map((c) => (
+          <option key={c.id} value={c.name}>{c.name}</option>
+        ))}
+        {!inList && value !== "" && <option value={value}>{value}</option>}
+        <option value={NEW}>+ New category…</option>
+      </select>
+      {adding && (
+        <div className="flex gap-2">
+          <input
+            className="bm-input flex-1"
+            placeholder="Category name"
+            value={draft}
+            autoFocus
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={async (e) => {
+              if (e.key === "Enter" && draft.trim()) {
+                await onCreate(draft.trim());
+                onChange(draft.trim());
+                setAdding(false);
+              }
+            }}
+          />
+          <button
+            onClick={async () => {
+              if (!draft.trim()) return;
+              await onCreate(draft.trim());
+              onChange(draft.trim());
+              setAdding(false);
+            }}
+            disabled={!draft.trim()}
+            className="px-4 h-11 rounded-xl bg-primary-500 text-white font-bold press shadow-sm disabled:opacity-40 shrink-0"
+          >
+            Add
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Owner-only manager: view + remove categories for the active tab.
+ *  Removing a category never touches items — they keep their name string. */
+function ManageCategoriesModal({
+  open,
+  kind,
+  categories,
+  onClose,
+  onDelete,
+}: {
+  open: boolean;
+  kind: StockCategoryKind;
+  categories: StockCategory[];
+  onClose: () => void;
+  onDelete: (id: string) => Promise<void>;
+}) {
+  const KIND_LABEL: Record<StockCategoryKind, string> = {
+    raw: "Raw Material",
+    finished: "Finished Good",
+    bar: "Bar",
+  };
+  return (
+    <Modal open={open} onClose={onClose} title={`${KIND_LABEL[kind]} Categories`}>
+      <div className="px-5 pb-6 pt-2 space-y-2">
+        {categories.length === 0 && (
+          <p className="text-sm text-gray-400 py-6 text-center">
+            No categories yet — add one from the item form.
+          </p>
+        )}
+        {categories.map((c) => (
+          <div key={c.id} className="flex items-center gap-2 bg-gray-50 rounded-xl px-3 py-2.5">
+            <span className="flex-1 text-sm font-semibold text-gray-800">{c.name}</span>
+            {c.isDefault && (
+              <span className="text-[10px] font-bold bg-gray-200 text-gray-500 px-2 py-0.5 rounded-full shrink-0">
+                Default
+              </span>
+            )}
+            <button
+              onClick={() => onDelete(c.id)}
+              className="text-gray-300 hover:text-red-400 press shrink-0 ml-1"
+              aria-label={`Remove ${c.name}`}
+            >
+              <X size={15} />
+            </button>
+          </div>
+        ))}
+        <p className="text-xs text-gray-400 pt-2">
+          Removing a category only removes it from the dropdown. Items already
+          in it keep their category and stay grouped.
+        </p>
+      </div>
+    </Modal>
+  );
+}
+
 function RawMaterialModal({
   item,
-  existingCategories,
+  categories,
   onClose,
   onSave,
+  onCreateCategory,
 }: {
   item: Partial<RawMaterial> | null;
-  existingCategories: string[];
+  categories: StockCategory[];
   onClose: () => void;
   onSave: (i: RawMaterial) => void;
+  onCreateCategory: (name: string) => Promise<void>;
 }) {
   const [name, setName] = useState(item?.name ?? "");
   const [category, setCategory] = useState(item?.category ?? "");
@@ -49,26 +220,41 @@ function RawMaterialModal({
   const [stock, setStock] = useState(item?.currentStock != null ? String(item.currentStock) : "");
   const [minStock, setMinStock] = useState(item?.minStock != null ? String(item.minStock) : "");
   const [cost, setCost] = useState(item?.costPaise != null ? String(item.costPaise / 100) : "");
+  // Dynamic pricing — last purchase (e.g. 5 kg for ₹450)
+  const [pQty, setPQty] = useState(item?.purchaseQty != null ? String(item.purchaseQty) : "");
+  const [pUnit, setPUnit] = useState(item?.purchaseUnit ?? item?.unit ?? "kg");
+  const [pCost, setPCost] = useState(
+    item?.purchaseCostPaise != null ? String(item.purchaseCostPaise / 100) : ""
+  );
 
-  useEffect(() => {
-    setName(item?.name ?? "");
-    setCategory(item?.category ?? "");
-    setUnit(item?.unit ?? "kg");
-    setStock(item?.currentStock != null ? String(item.currentStock) : "");
-    setMinStock(item?.minStock != null ? String(item.minStock) : "");
-    setCost(item?.costPaise != null ? String(item.costPaise / 100) : "");
-  }, [item]);
+  const purchaseQtyNum = Number(pQty);
+  const purchaseCostPaise = pCost !== "" ? Math.round(Number(pCost) * 100) : NaN;
+  const hasPurchase = pQty !== "" && pCost !== "" && purchaseQtyNum > 0 && purchaseCostPaise >= 0;
+  const derivedCost = hasPurchase && unit.trim()
+    ? costPerUnitPaise(purchaseCostPaise, purchaseQtyNum, pUnit, unit)
+    : null;
+  const incompatible = hasPurchase && unit.trim() !== "" && derivedCost === null;
 
   const handleSave = () => {
-    if (!name.trim()) return;
+    if (!name.trim() || !unit.trim()) return;
     onSave({
       id: item?.id ?? crypto.randomUUID(),
       name: name.trim(),
       category: category.trim() || undefined,
-      unit,
+      unit: unit.trim(),
       currentStock: Number(stock) || 0,
       minStock: minStock ? Number(minStock) : undefined,
-      costPaise: cost ? Math.round(Number(cost) * 100) : undefined,
+      // Derived per-unit cost wins whenever the purchase data converts;
+      // otherwise the manual per-unit cost applies.
+      costPaise:
+        derivedCost !== null
+          ? derivedCost
+          : cost
+            ? Math.round(Number(cost) * 100)
+            : undefined,
+      purchaseQty: hasPurchase ? purchaseQtyNum : undefined,
+      purchaseUnit: hasPurchase ? pUnit : undefined,
+      purchaseCostPaise: hasPurchase ? purchaseCostPaise : undefined,
       updatedAt: new Date().toISOString(),
     });
   };
@@ -82,32 +268,73 @@ function RawMaterialModal({
         </div>
         <div>
           <label className="block text-xs font-bold text-gray-500 mb-1.5">Category <span className="font-normal text-gray-400">optional</span></label>
-          <input className="bm-input" list="raw-cat-list" placeholder="e.g. Vegetables, Dairy, Spices" value={category} onChange={(e) => setCategory(e.target.value)} />
-          <datalist id="raw-cat-list">{existingCategories.map((c) => <option key={c} value={c} />)}</datalist>
+          <CategorySelect value={category} categories={categories} onChange={setCategory} onCreate={onCreateCategory} />
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="block text-xs font-bold text-gray-500 mb-1.5">Unit *</label>
-            <select className="bm-input" value={unit} onChange={(e) => setUnit(e.target.value)}>
-              {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
-            </select>
+            <label className="block text-xs font-bold text-gray-500 mb-1.5">Stock Unit *</label>
+            <UnitSelect value={unit} onChange={setUnit} />
           </div>
           <div>
             <label className="block text-xs font-bold text-gray-500 mb-1.5">Current Stock</label>
             <input type="number" className="bm-input" placeholder="0" value={stock} onChange={(e) => setStock(e.target.value)} />
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="block text-xs font-bold text-gray-500 mb-1.5">Min Stock Alert</label>
-            <input type="number" className="bm-input" placeholder="Optional" value={minStock} onChange={(e) => setMinStock(e.target.value)} />
-          </div>
-          <div>
-            <label className="block text-xs font-bold text-gray-500 mb-1.5">Cost per unit (&#8377;)</label>
-            <input type="number" className="bm-input" placeholder="Optional" value={cost} onChange={(e) => setCost(e.target.value)} />
-          </div>
+        <div>
+          <label className="block text-xs font-bold text-gray-500 mb-1.5">Min Stock Alert</label>
+          <input type="number" className="bm-input" placeholder="Optional" value={minStock} onChange={(e) => setMinStock(e.target.value)} />
         </div>
-        <button onClick={handleSave} disabled={!name.trim()} className="w-full h-12 bg-primary-500 text-white rounded-2xl font-bold disabled:opacity-40 press shadow-md">
+
+        {/* Dynamic pricing from last purchase */}
+        <div className="bg-gray-50 rounded-2xl p-4 space-y-3">
+          <div>
+            <p className="text-sm font-bold text-gray-700">Last purchase <span className="font-normal text-gray-400">optional</span></p>
+            <p className="text-xs text-gray-400">
+              e.g. bought 5 Kg for ₹450 — the per-{getUnitDef(unit).label || "unit"} cost is calculated automatically.
+            </p>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-bold text-gray-500 mb-1.5">Purchase Qty</label>
+              <input type="number" className="bm-input" placeholder="e.g. 5" value={pQty} onChange={(e) => setPQty(e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-500 mb-1.5">Purchase Unit</label>
+              <UnitSelect value={pUnit} onChange={setPUnit} />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-gray-500 mb-1.5">Purchase Cost (&#8377;)</label>
+            <input type="number" className="bm-input" placeholder="e.g. 450" value={pCost} onChange={(e) => setPCost(e.target.value)} />
+          </div>
+          {derivedCost !== null && (
+            <p className="text-xs font-bold text-green-700 bg-green-50 rounded-xl px-3 py-2">
+              Cost per {getUnitDef(unit).label}: {fmtRupee(derivedCost)}
+            </p>
+          )}
+          {incompatible && (
+            <p className="text-xs font-semibold text-amber-600 bg-amber-50 rounded-xl px-3 py-2">
+              {getUnitDef(pUnit).label} can&apos;t convert to {getUnitDef(unit).label} automatically —
+              enter the cost per {getUnitDef(unit).label} manually below.
+            </p>
+          )}
+        </div>
+
+        <div>
+          <label className="block text-xs font-bold text-gray-500 mb-1.5">
+            Cost per {getUnitDef(unit).label || "unit"} (&#8377;)
+            {derivedCost !== null && <span className="font-normal text-gray-400"> auto-calculated</span>}
+          </label>
+          <input
+            type="number"
+            className="bm-input"
+            placeholder="Optional"
+            value={derivedCost !== null ? String(derivedCost / 100) : cost}
+            disabled={derivedCost !== null}
+            onChange={(e) => setCost(e.target.value)}
+          />
+        </div>
+        <button onClick={handleSave} disabled={!name.trim() || !unit.trim()} className="w-full h-12 bg-primary-500 text-white rounded-2xl font-bold disabled:opacity-40 press shadow-md">
           {item?.id ? "Save Changes" : "Add Item"}
         </button>
       </div>
@@ -117,14 +344,16 @@ function RawMaterialModal({
 
 function FinishedGoodModal({
   item,
-  existingCategories,
+  categories,
   onClose,
   onSave,
+  onCreateCategory,
 }: {
   item: Partial<FinishedGood> | null;
-  existingCategories: string[];
+  categories: StockCategory[];
   onClose: () => void;
   onSave: (i: FinishedGood) => void;
+  onCreateCategory: (name: string) => Promise<void>;
 }) {
   const [name, setName] = useState(item?.name ?? "");
   const [category, setCategory] = useState(item?.category ?? "");
@@ -135,23 +364,13 @@ function FinishedGoodModal({
   const [expiry, setExpiry] = useState(item?.expiryDate ?? "");
   const today = todayStr();
 
-  useEffect(() => {
-    setName(item?.name ?? "");
-    setCategory(item?.category ?? "");
-    setUnit(item?.unit ?? "piece");
-    setQty(item?.quantity != null ? String(item.quantity) : "");
-    setCost(item?.costPricePaise != null ? String(item.costPricePaise / 100) : "");
-    setSelling(item?.sellingPricePaise != null ? String(item.sellingPricePaise / 100) : "");
-    setExpiry(item?.expiryDate ?? "");
-  }, [item]);
-
   const handleSave = () => {
-    if (!name.trim()) return;
+    if (!name.trim() || !unit.trim()) return;
     onSave({
       id: item?.id ?? crypto.randomUUID(),
       name: name.trim(),
       category: category.trim() || undefined,
-      unit,
+      unit: unit.trim(),
       quantity: Number(qty) || 0,
       costPricePaise: cost ? Math.round(Number(cost) * 100) : undefined,
       sellingPricePaise: selling ? Math.round(Number(selling) * 100) : undefined,
@@ -172,15 +391,12 @@ function FinishedGoodModal({
         </div>
         <div>
           <label className="block text-xs font-bold text-gray-500 mb-1.5">Category <span className="font-normal text-gray-400">optional</span></label>
-          <input className="bm-input" list="fin-cat-list" placeholder="e.g. Beverages, Frozen, Bakery" value={category} onChange={(e) => setCategory(e.target.value)} />
-          <datalist id="fin-cat-list">{existingCategories.map((c) => <option key={c} value={c} />)}</datalist>
+          <CategorySelect value={category} categories={categories} onChange={setCategory} onCreate={onCreateCategory} />
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-xs font-bold text-gray-500 mb-1.5">Unit *</label>
-            <select className="bm-input" value={unit} onChange={(e) => setUnit(e.target.value)}>
-              {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
-            </select>
+            <UnitSelect value={unit} onChange={setUnit} />
           </div>
           <div>
             <label className="block text-xs font-bold text-gray-500 mb-1.5">Quantity</label>
@@ -201,7 +417,7 @@ function FinishedGoodModal({
           <label className="block text-xs font-bold text-gray-500 mb-1.5">Expiry Date <span className="font-normal text-gray-400">optional</span></label>
           <input type="date" className="bm-input" min={today} value={expiry} onChange={(e) => setExpiry(e.target.value)} />
         </div>
-        <button onClick={handleSave} disabled={!name.trim()} className="w-full h-12 bg-primary-500 text-white rounded-2xl font-bold disabled:opacity-40 press shadow-md">
+        <button onClick={handleSave} disabled={!name.trim() || !unit.trim()} className="w-full h-12 bg-primary-500 text-white rounded-2xl font-bold disabled:opacity-40 press shadow-md">
           {item?.id ? "Save Changes" : "Add Item"}
         </button>
       </div>
@@ -211,14 +427,16 @@ function FinishedGoodModal({
 
 function BarItemModal({
   item,
-  existingCategories,
+  categories,
   onClose,
   onSave,
+  onCreateCategory,
 }: {
   item: Partial<FinishedGood> | null;
-  existingCategories: string[];
+  categories: StockCategory[];
   onClose: () => void;
   onSave: (i: FinishedGood) => void;
+  onCreateCategory: (name: string) => Promise<void>;
 }) {
   const [name, setName] = useState(item?.name ?? "");
   const [category, setCategory] = useState(item?.category ?? "");
@@ -227,22 +445,13 @@ function BarItemModal({
   const [cost, setCost] = useState(item?.costPricePaise != null ? String(item.costPricePaise / 100) : "");
   const [expiry, setExpiry] = useState(item?.expiryDate ?? "");
 
-  useEffect(() => {
-    setName(item?.name ?? "");
-    setCategory(item?.category ?? "");
-    setUnit(item?.unit ?? "bottle");
-    setQty(item?.quantity != null ? String(item.quantity) : "");
-    setCost(item?.costPricePaise != null ? String(item.costPricePaise / 100) : "");
-    setExpiry(item?.expiryDate ?? "");
-  }, [item]);
-
   const handleSave = () => {
-    if (!name.trim()) return;
+    if (!name.trim() || !unit.trim()) return;
     onSave({
       id: item?.id ?? crypto.randomUUID(),
       name: name.trim(),
       category: category.trim() || undefined,
-      unit,
+      unit: unit.trim(),
       quantity: Number(qty) || 0,
       costPricePaise: cost ? Math.round(Number(cost) * 100) : undefined,
       expiryDate: expiry || undefined,
@@ -260,15 +469,12 @@ function BarItemModal({
         </div>
         <div>
           <label className="block text-xs font-bold text-gray-500 mb-1.5">Category <span className="font-normal text-gray-400">optional</span></label>
-          <input className="bm-input" list="bar-cat-list" placeholder="e.g. Whisky, Beer, Wine, Spirits" value={category} onChange={(e) => setCategory(e.target.value)} />
-          <datalist id="bar-cat-list">{existingCategories.map((c) => <option key={c} value={c} />)}</datalist>
+          <CategorySelect value={category} categories={categories} onChange={setCategory} onCreate={onCreateCategory} />
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-xs font-bold text-gray-500 mb-1.5">Unit</label>
-            <select className="bm-input" value={unit} onChange={(e) => setUnit(e.target.value)}>
-              {["bottle", "can", "litre", "ml", "pack"].map((u) => <option key={u} value={u}>{u}</option>)}
-            </select>
+            <UnitSelect value={unit} onChange={setUnit} />
           </div>
           <div>
             <label className="block text-xs font-bold text-gray-500 mb-1.5">Quantity</label>
@@ -283,7 +489,7 @@ function BarItemModal({
           <label className="block text-xs font-bold text-gray-500 mb-1.5">Expiry Date <span className="font-normal text-gray-400">optional</span></label>
           <input type="date" className="bm-input" value={expiry} onChange={(e) => setExpiry(e.target.value)} />
         </div>
-        <button onClick={handleSave} disabled={!name.trim()} className="w-full h-12 bg-primary-500 text-white rounded-2xl font-bold disabled:opacity-40 press shadow-md">
+        <button onClick={handleSave} disabled={!name.trim() || !unit.trim()} className="w-full h-12 bg-primary-500 text-white rounded-2xl font-bold disabled:opacity-40 press shadow-md">
           {item?.id ? "Save Changes" : "Add Item"}
         </button>
       </div>
@@ -389,18 +595,71 @@ export default function StockPage() {
   const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([]);
   const [finishedGoods, setFinishedGoods] = useState<FinishedGood[]>([]);
   const [barItems, setBarItems] = useState<FinishedGood[]>([]);
+  const [stockCats, setStockCats] = useState<StockCategory[]>([]);
+  const [manageCats, setManageCats] = useState(false);
 
   const [editRaw, setEditRaw] = useState<Partial<RawMaterial> | null>(null);
   const [editFinished, setEditFinished] = useState<Partial<FinishedGood> | null>(null);
   const [editBar, setEditBar] = useState<Partial<FinishedGood> | null>(null);
 
   useEffect(() => {
-    import("@/lib/db").then(({ dbGetAllRawMaterials, dbGetAllFinishedGoods, dbGetAllBarItems }) => {
-      dbGetAllRawMaterials(uid).then(setRawMaterials);
-      dbGetAllFinishedGoods(uid).then(setFinishedGoods);
-      dbGetAllBarItems(uid).then(setBarItems);
+    let cancelled = false;
+    import("@/lib/db").then(async (db) => {
+      const [raws, fins, bars] = await Promise.all([
+        db.dbGetAllRawMaterials(uid),
+        db.dbGetAllFinishedGoods(uid),
+        db.dbGetAllBarItems(uid),
+      ]);
+      if (cancelled) return;
+      setRawMaterials(raws);
+      setFinishedGoods(fins);
+      setBarItems(bars);
+      // One-time seed: system defaults + import of categories already used
+      // on existing items, so previous user categories are preserved.
+      try {
+        await db.dbEnsureStockCategories(uid, {
+          raw: raws.map((r) => r.category).filter(Boolean) as string[],
+          finished: fins.map((f) => f.category).filter(Boolean) as string[],
+          bar: bars.map((b) => b.category).filter(Boolean) as string[],
+        });
+      } catch {
+        // seeding failure is non-fatal — dropdowns just start empty
+      }
+      const cats = await db.dbGetStockCategories(uid);
+      if (!cancelled) setStockCats(cats);
     });
+    return () => { cancelled = true; };
   }, [uid]);
+
+  const kindForTab: StockCategoryKind = activeTab;
+  const catsForTab = stockCats.filter((c) => c.kind === kindForTab);
+
+  const createCategory = useCallback(
+    async (kind: StockCategoryKind, name: string) => {
+      try {
+        const { dbAddStockCategory, dbGetStockCategories } = await import("@/lib/db");
+        await dbAddStockCategory(uid, kind, name);
+        setStockCats(await dbGetStockCategories(uid));
+      } catch {
+        showToast("Failed to add category", "error");
+      }
+    },
+    [uid, showToast]
+  );
+
+  const deleteCategory = useCallback(
+    async (id: string) => {
+      try {
+        const { dbDeleteStockCategory, dbGetStockCategories } = await import("@/lib/db");
+        await dbDeleteStockCategory(uid, id);
+        setStockCats(await dbGetStockCategories(uid));
+        showToast("Category removed");
+      } catch {
+        showToast("Failed to remove category", "error");
+      }
+    },
+    [uid, showToast]
+  );
 
   const handleSaveRaw = async (item: RawMaterial) => {
     const { dbSaveRawMaterial, dbGetAllRawMaterials } = await import("@/lib/db");
@@ -474,6 +733,9 @@ export default function StockPage() {
             <h1 className="text-xl font-black text-gray-900">Inventory</h1>
             {isOwner && (
               <div className="flex gap-2">
+                <button onClick={() => setManageCats(true)} className="flex items-center gap-1.5 bg-gray-100 text-gray-600 text-sm font-bold px-3 py-2 rounded-xl press" aria-label="Manage categories">
+                  <Settings2 size={15} /> Categories
+                </button>
                 <button onClick={handleAddButton} className="flex items-center gap-1.5 bg-primary-500 text-white text-sm font-bold px-3 py-2 rounded-xl press shadow-sm">
                   <Plus size={15} /> Add
                 </button>
@@ -513,6 +775,7 @@ export default function StockPage() {
                       {cats.length > 1 && <p className="text-xs font-bold text-gray-400 uppercase tracking-wider px-1 pt-2">{cat}</p>}
                       {grouped.get(cat)!.map((item) => {
                         const isLow = isLowStock(item);
+                        const unitCost = effectiveUnitCostPaise(item);
                         return (
                           <div key={item.id} className="bg-white rounded-2xl shadow-sm p-4 flex items-center gap-3">
                             <div className="flex-1 min-w-0">
@@ -523,7 +786,7 @@ export default function StockPage() {
                               <p className="text-sm text-gray-500 mt-0.5">
                                 {item.currentStock} {item.unit}
                                 {item.minStock != null && <span className="text-gray-400"> · min {item.minStock}</span>}
-                                {item.costPaise != null && <span className="text-gray-400"> · {fmtRupee(item.costPaise)}/{item.unit}</span>}
+                                {unitCost != null && <span className="text-gray-400"> · {fmtRupee(unitCost)}/{item.unit}</span>}
                               </p>
                             </div>
                             {isOwner && (
@@ -657,26 +920,36 @@ export default function StockPage() {
       <RawMaterialModal
         key={editRaw ? (editRaw.id ?? "new-raw") : "closed-raw"}
         item={editRaw}
-        existingCategories={Array.from(new Set(rawMaterials.map((r) => r.category).filter(Boolean) as string[]))}
+        categories={stockCats.filter((c) => c.kind === "raw")}
         onClose={() => setEditRaw(null)}
         onSave={handleSaveRaw}
+        onCreateCategory={(name) => createCategory("raw", name)}
       />
       <FinishedGoodModal
         key={editFinished ? (editFinished.id ?? "new-finished") : "closed-finished"}
         item={editFinished}
-        existingCategories={Array.from(new Set(finishedGoods.map((f) => f.category).filter(Boolean) as string[]))}
+        categories={stockCats.filter((c) => c.kind === "finished")}
         onClose={() => setEditFinished(null)}
         onSave={handleSaveFinished}
+        onCreateCategory={(name) => createCategory("finished", name)}
       />
       {showBarTab && (
         <BarItemModal
           key={editBar ? (editBar.id ?? "new-bar") : "closed-bar"}
           item={editBar}
-          existingCategories={Array.from(new Set(barItems.map((b) => b.category).filter(Boolean) as string[]))}
+          categories={stockCats.filter((c) => c.kind === "bar")}
           onClose={() => setEditBar(null)}
           onSave={handleSaveBar}
+          onCreateCategory={(name) => createCategory("bar", name)}
         />
       )}
+      <ManageCategoriesModal
+        open={manageCats}
+        kind={kindForTab}
+        categories={catsForTab}
+        onClose={() => setManageCats(false)}
+        onDelete={deleteCategory}
+      />
     </AppShell>
   );
 }
