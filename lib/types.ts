@@ -151,7 +151,30 @@ export interface RawMaterial {
   unit: string;
   currentStock: number;
   minStock?: number;
+  /** Per-stock-unit cost snapshot (integer paise). When purchase fields are
+   *  present this is DERIVED from them via lib/utils/units.ts — kept stored
+   *  so every existing reader (recipes, reports, consumption) still works. */
   costPaise?: number;
+  /** Dynamic pricing source: last purchase, e.g. 5 kg for ₹450.
+   *  costPaise is recomputed from these on save (unit-aware). */
+  purchaseQty?: number;
+  purchaseUnit?: string;
+  purchaseCostPaise?: number;
+  updatedAt: string;
+}
+
+/** Inventory Sprint 1 — persisted stock category (per tab: raw / finished / bar).
+ *  System defaults are seeded once per business; owners can add/remove their
+ *  own. Items store the category NAME (string) exactly as before, so all
+ *  existing data and grouping logic keeps working unchanged. */
+export type StockCategoryKind = "raw" | "finished" | "bar";
+
+export interface StockCategory {
+  id: string;
+  name: string;
+  kind: StockCategoryKind;
+  /** true = seeded system default (still removable by the owner). */
+  isDefault?: boolean;
   updatedAt: string;
 }
 
