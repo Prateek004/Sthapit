@@ -12,6 +12,8 @@ import type {
   PurchaseRecord,
   PersistedCart,
   LeakAction,
+  StockCategory,
+  StockCategoryKind,
 } from "@/lib/types";
 import { recordIdbError } from "@/lib/utils/observability";
 
@@ -122,6 +124,7 @@ class Sth1rDB extends Dexie {
   wastage!:       Table<WithUid<WastageEntry>, string>;
   recipes!:       Table<WithUid<Recipe>, string>;
   purchases!:     Table<WithUid<PurchaseRecord>, string>;
+  stockCategories!: Table<WithUid<StockCategory>, string>;
 
   constructor() {
     super("sth1r_db");
@@ -212,6 +215,24 @@ class Sth1rDB extends Dexie {
       wastage:       "id, _uid, createdAt",
       recipes:       "id, _uid",
       purchases:     "id, _uid, createdAt",
+    });
+    // Version 8: stockCategories (Inventory Sprint 1) — persisted inventory
+    // categories with system defaults + user add/remove. Purely additive.
+    this.version(8).stores({
+      orders:        "id, _uid, createdAt, syncStatus, status",
+      menuItems:     "id, _uid, categoryId",
+      categories:    "id, _uid, sortOrder",
+      rawMaterials:  "id, _uid, name",
+      finishedGoods: "id, _uid, name, expiryDate",
+      barItems:      "id, _uid, name, expiryDate",
+      openTables:    "id, _uid, tableNumber",
+      tableOrders:   "id, _uid, tableId, status, syncStatus, updatedAt",
+      carts:         "id",
+      leakActions:   "id, _uid",
+      wastage:       "id, _uid, createdAt",
+      recipes:       "id, _uid",
+      purchases:     "id, _uid, createdAt",
+      stockCategories: "id, _uid, kind",
     });
   }
 }
@@ -847,6 +868,124 @@ export async function dbDeletePurchase(uid: string, purchaseId: string): Promise
     const db = await getDB();
     const rec = await db.purchases.get(purchaseId);
     if (rec && rec._uid === uid) await db.purchases.delete(purchaseId);
+  } catch (err) {
+    recordIdbError();
+    throw err;
+  }
+}
+
+// ── Stock Categories (Inventory Sprint 1) ─────────────────────────────────────
+// Items keep storing the category NAME string (unchanged data model); this
+// store only owns the selectable list per tab: system defaults + user entries.
+
+const STOCK_CAT_DEFAULTS: Record<StockCategoryKind, string[]> = {
+  raw:      ["Vegetables", "Fruits", "Dairy", "Grains & Flour", "Spices", "Oils", "Meat & Seafood", "Packaging"],
+  finished: ["Beverages", "Bakery", "Frozen", "Snacks", "Desserts"],
+  bar:      ["Whisky", "Beer", "Wine", "Vodka", "Rum", "Mixers"],
+};
+
+const STOCK_CAT_SEED_KEY = "sth1r_stockcats_seeded_v1";
+
+function stockCatSeededFor(uid: string): boolean {
+  try {
+    const raw = localStorage.getItem(STOCK_CAT_SEED_KEY);
+    if (!raw) return false;
+    return (JSON.parse(raw) as string[]).includes(uid);
+  } catch {
+    return false;
+  }
+}
+
+function markStockCatSeeded(uid: string): void {
+  try {
+    const raw = localStorage.getItem(STOCK_CAT_SEED_KEY);
+    const list = raw ? (JSON.parse(raw) as string[]) : [];
+    if (!list.includes(uid)) {
+      list.push(uid);
+      localStorage.setItem(STOCK_CAT_SEED_KEY, JSON.stringify(list));
+    }
+  } catch {}
+}
+
+/**
+ * Idempotent, one-time-per-business seeding:
+ *   1. Inserts system default categories.
+ *   2. IMPORTS every distinct free-text category already used on existing
+ *      items (passed by the caller per kind), so previously created user
+ *      categories are preserved as first-class entries.
+ * The seeded flag lives in localStorage — deleting a default later never
+ * causes it to be re-added.
+ */
+export async function dbEnsureStockCategories(
+  uid: string,
+  existingItemCategories: Partial<Record<StockCategoryKind, string[]>>
+): Promise<void> {
+  if (stockCatSeededFor(uid)) return;
+  try {
+    const db = await getDB();
+    const now = new Date().toISOString();
+    const rows: WithUid<StockCategory>[] = [];
+    (Object.keys(STOCK_CAT_DEFAULTS) as StockCategoryKind[]).forEach((kind) => {
+      const seen = new Set<string>();
+      STOCK_CAT_DEFAULTS[kind].forEach((name) => {
+        seen.add(name.toLowerCase());
+        rows.push({ id: crypto.randomUUID(), name, kind, isDefault: true, updatedAt: now, _uid: uid });
+      });
+      (existingItemCategories[kind] ?? []).forEach((name) => {
+        const trimmed = name.trim();
+        if (!trimmed || seen.has(trimmed.toLowerCase())) return;
+        seen.add(trimmed.toLowerCase());
+        rows.push({ id: crypto.randomUUID(), name: trimmed, kind, updatedAt: now, _uid: uid });
+      });
+    });
+    await db.stockCategories.bulkPut(rows);
+    markStockCatSeeded(uid);
+  } catch (err) {
+    recordIdbError();
+    throw err;
+  }
+}
+
+export async function dbGetStockCategories(uid: string, kind?: StockCategoryKind): Promise<StockCategory[]> {
+  try {
+    const db = await getDB();
+    const all = (await db.stockCategories
+      .where("_uid")
+      .equals(uid)
+      .toArray()) as unknown as StockCategory[];
+    const filtered = kind ? all.filter((c) => c.kind === kind) : all;
+    return filtered.sort((a, b) => a.name.localeCompare(b.name));
+  } catch {
+    recordIdbError();
+    return [];
+  }
+}
+
+/** Upsert by (kind, case-insensitive name) so duplicates can never accumulate. */
+export async function dbAddStockCategory(uid: string, kind: StockCategoryKind, name: string): Promise<StockCategory | null> {
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  try {
+    const db = await getDB();
+    const existing = await dbGetStockCategories(uid, kind);
+    const dup = existing.find((c) => c.name.toLowerCase() === trimmed.toLowerCase());
+    if (dup) return dup;
+    const cat: StockCategory = { id: crypto.randomUUID(), name: trimmed, kind, updatedAt: new Date().toISOString() };
+    await db.stockCategories.put({ ...cat, _uid: uid });
+    return cat;
+  } catch (err) {
+    recordIdbError();
+    throw err;
+  }
+}
+
+/** Removes a category from the selectable list. Items already tagged with
+ *  its name are untouched — they keep grouping under that name as before. */
+export async function dbDeleteStockCategory(uid: string, categoryId: string): Promise<void> {
+  try {
+    const db = await getDB();
+    const rec = await db.stockCategories.get(categoryId);
+    if (rec && rec._uid === uid) await db.stockCategories.delete(categoryId);
   } catch (err) {
     recordIdbError();
     throw err;
