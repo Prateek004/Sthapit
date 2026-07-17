@@ -1,13 +1,16 @@
-import type { MenuItem, Recipe, RawMaterial } from "@/lib/types";
+import type { MenuItem, Recipe, RawMaterial, RecipeIngredient } from "@/lib/types";
 import {
   dbAtomicDeductRawMaterials,
   dbSaveMenuItem,
   dbGetAllRecipes,
   dbGetAllMenuItems,
+  dbGetAllRawMaterials,
 } from "@/lib/db";
+import { ingredientQtyInStockUnit } from "@/lib/utils/recipeCost";
 
 /**
  * Inventory Sprint 1 — Real-Time POS Inventory Validation.
+ * Inventory Sprint 2 — every quantity below is now UNIT-AWARE.
  *
  * Two independent stock signals feed a menu item's sellability:
  *   1. Recipe-based: qty of each raw material one plate needs × current
@@ -20,6 +23,16 @@ import {
  * A menu item with NEITHER a recipe NOR an override is "untracked" and is
  * always sellable — this module only ever restricts items the owner chose
  * to link to real inventory data.
+ *
+ * SPRINT 2 — UNIT CONTRACT
+ * A recipe line may be written in any unit compatible with the material's
+ * stock unit (200 gram against stock held in Kg). Conversion runs through
+ * lib/utils/recipeCost.ts — the single costing/measuring authority.
+ * When a line's unit CANNOT convert (200 "scoop" vs stock in "kg"), the line
+ * is skipped rather than treated as zero: an unmeasurable line is data the
+ * engine cannot interpret, and blocking a live bill over uninterpretable data
+ * would be worse than the small oversell risk. The Recipes editor flags every
+ * such line loudly so the owner fixes it at the source.
  */
 
 export type LineItem = { menuItemId: string; name: string; qty: number };
@@ -58,8 +71,27 @@ export class StockShortfallError extends Error {
   }
 }
 
+/**
+ * How much of a material's STOCK UNIT one plate needs.
+ * Returns null when the line must not constrain the sale (unconvertible unit,
+ * or a non-positive quantity). When the material row itself is missing the
+ * quantity is read as-is — preserving the pre-Sprint-2 behaviour where an
+ * orphaned ingredient reads as zero stock and blocks the item.
+ */
+function requiredPerPlate(
+  ing: RecipeIngredient,
+  material: RawMaterial | undefined
+): number | null {
+  if (!Number.isFinite(ing.qtyPerUnit) || ing.qtyPerUnit <= 0) return null;
+  if (!material) return ing.qtyPerUnit;
+  const need = ingredientQtyInStockUnit(ing, material);
+  if (need === null || need <= 0) return null;
+  return need;
+}
+
 /** Max whole plates of `menuItemId` current raw-material stock can produce.
- *  Returns null when the item has no recipe at all (untracked → unlimited). */
+ *  Returns null when the item has no recipe at all (untracked → unlimited),
+ *  or when no line in the recipe is measurable against stock. */
 export function getMaxServablePortions(
   menuItemId: string,
   recipeByMenuItem: Map<string, Recipe>,
@@ -69,9 +101,11 @@ export function getMaxServablePortions(
   if (!recipe || recipe.ingredients.length === 0) return null;
   let max = Infinity;
   for (const ing of recipe.ingredients) {
-    if (ing.qtyPerUnit <= 0) continue;
-    const stock = materialById.get(ing.rawMaterialId)?.currentStock ?? 0;
-    const possible = Math.floor(stock / ing.qtyPerUnit);
+    const material = materialById.get(ing.rawMaterialId);
+    const need = requiredPerPlate(ing, material);
+    if (need === null) continue;
+    const stock = material?.currentStock ?? 0;
+    const possible = Math.floor(stock / need);
     if (possible < max) max = possible;
   }
   return Number.isFinite(max) ? Math.max(0, max) : null;
@@ -126,9 +160,10 @@ export function checkStock(
       let limiting: string | undefined;
       let limitingLeft = Infinity;
       for (const ing of recipe.ingredients) {
-        if (ing.qtyPerUnit <= 0) continue;
         const mat = materialById.get(ing.rawMaterialId);
-        const possible = Math.floor((mat?.currentStock ?? 0) / ing.qtyPerUnit);
+        const need = requiredPerPlate(ing, mat);
+        if (need === null) continue;
+        const possible = Math.floor((mat?.currentStock ?? 0) / need);
         if (possible < limitingLeft) {
           limitingLeft = possible;
           limiting = mat?.name;
@@ -146,18 +181,25 @@ export function checkStock(
  * has been durably saved. Deduction problems are logged, never thrown: the
  * bill is already final and must never be rolled back over a stock-ledger
  * hiccup.
- *   1. Decrements raw materials per recipe (aggregated across all lines).
+ *   1. Decrements raw materials per recipe (aggregated across all lines,
+ *      each line converted into the material's own stock unit).
  *   2. Decrements any manual pre-prepared override pools, auto-disabling
  *      the item once its pool reaches 0.
+ *
+ * `rawMaterials` is optional purely for backward compatibility: without it,
+ * recipe lines are read in the material's own unit — identical to pre-Sprint-2
+ * behaviour. deductStockForOrder() always supplies it.
  */
 export async function deductStockForSale(
   businessId: string,
   lines: LineItem[],
   recipes: Recipe[],
-  menuItems: MenuItem[]
+  menuItems: MenuItem[],
+  rawMaterials: RawMaterial[] = []
 ): Promise<void> {
   const recipeByMenuItem = new Map(recipes.map((r) => [r.menuItemId, r]));
   const menuById = new Map(menuItems.map((m) => [m.id, m]));
+  const materialById = new Map(rawMaterials.map((m) => [m.id, m]));
 
   const qtyByMenuItem = new Map<string, number>();
   for (const l of lines) {
@@ -169,7 +211,14 @@ export async function deductStockForSale(
     const recipe = recipeByMenuItem.get(menuItemId);
     if (!recipe) return;
     for (const ing of recipe.ingredients) {
-      deductions[ing.rawMaterialId] = (deductions[ing.rawMaterialId] ?? 0) + ing.qtyPerUnit * qty;
+      const material = materialById.get(ing.rawMaterialId);
+      // No material row (legacy call site with no rawMaterials, or an orphaned
+      // ingredient) → fall back to the raw quantity, exactly as before.
+      const perPlate = material
+        ? ingredientQtyInStockUnit(ing, material)
+        : ing.qtyPerUnit;
+      if (perPlate === null || !(perPlate > 0)) continue;
+      deductions[ing.rawMaterialId] = (deductions[ing.rawMaterialId] ?? 0) + perPlate * qty;
     }
   });
 
@@ -205,11 +254,11 @@ export async function deductStockForSale(
 
 /**
  * Convenience wrapper used by checkout flows (POS quick billing + table
- * settle). Loads the business's recipes and menu items from IDB itself, then
- * runs deductStockForSale — so call sites stay one line and there is exactly
- * ONE deduction code path in the app. Fire-and-forget by design: any failure
- * is logged and swallowed, because the bill is already durably saved and must
- * never be affected by a stock-ledger hiccup.
+ * settle). Loads the business's recipes, menu items and raw materials from
+ * IDB itself, then runs deductStockForSale — so call sites stay one line and
+ * there is exactly ONE deduction code path in the app. Fire-and-forget by
+ * design: any failure is logged and swallowed, because the bill is already
+ * durably saved and must never be affected by a stock-ledger hiccup.
  */
 export async function deductStockForOrder(
   businessId: string,
@@ -223,7 +272,10 @@ export async function deductStockForOrder(
     ]);
     // Nothing tracked → nothing to do (the common case for new businesses).
     if (recipes.length === 0 && !menuItems.some((m) => m.manualStockOverride)) return;
-    await deductStockForSale(businessId, lines, recipes, menuItems);
+    // Materials are only needed for unit conversion on recipe lines — skip the
+    // read entirely when there are no recipes to convert.
+    const rawMaterials = recipes.length > 0 ? await dbGetAllRawMaterials(businessId) : [];
+    await deductStockForSale(businessId, lines, recipes, menuItems, rawMaterials);
     if (typeof window !== "undefined") {
       window.dispatchEvent(new Event(STOCK_UPDATED_EVENT));
     }
