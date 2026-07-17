@@ -545,6 +545,13 @@ interface AppContextValue {
   }) => Promise<Order>;
   holdToTable: (tableNumber: number) => Promise<OpenTable>;
   upsertMenuItem: (item: MenuItem) => Promise<void>;
+  /** Reloads menu items + categories straight from IndexedDB and replaces
+   *  them in state via the existing SET_MENU action. Used after a background
+   *  write that bypasses upsertMenuItem — e.g. syncMenuCostsFromRecipes
+   *  recomputing costPricePaise for several items after a recipe or an
+   *  ingredient's cost changes — so POS, Menu, and Dashboard reflect the new
+   *  numbers immediately instead of on next reload. */
+  refreshMenuItemsFromDb: () => Promise<void>;
   deleteMenuItem: (id: string) => Promise<void>;
   upsertCategory: (cat: MenuCategory) => Promise<void>;
   deleteCategory: (id: string) => Promise<void>;
@@ -1421,6 +1428,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [state.session]
   );
 
+  const refreshMenuItemsFromDb = useCallback(async () => {
+    const businessId = state.session?.businessId ?? "default";
+    try {
+      const db = await import("@/lib/db");
+      const [items, categories] = await Promise.all([
+        db.dbGetAllMenuItems(businessId),
+        db.dbGetAllCategories(businessId),
+      ]);
+      dispatch({ type: "SET_MENU", items, categories });
+    } catch (err) {
+      console.error("[AppContext] refreshMenuItemsFromDb failed", err);
+    }
+  }, [state.session]);
+
   const deleteMenuItem = useCallback(
     async (id: string) => {
       if (!canPerform("manageMenu", state.session)) {
@@ -1517,6 +1538,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         placeOrder,
         holdToTable,
         upsertMenuItem,
+        refreshMenuItemsFromDb,
         deleteMenuItem,
         upsertCategory,
         deleteCategory,
