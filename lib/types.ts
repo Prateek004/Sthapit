@@ -230,8 +230,16 @@ export interface FinishedGood {
 /** G2: one recipe per menu item — how much of each raw material one plate uses. */
 export interface RecipeIngredient {
   rawMaterialId: string;
-  /** Quantity used per ONE unit sold, in the raw material's own unit (kg, L, pcs) */
+  /** Quantity used per ONE unit sold, expressed in `unit` below. */
   qtyPerUnit: number;
+  /** Inventory Sprint 2 — the unit this line is written in (e.g. 200 "gram"
+   *  of an item stocked in Kg). Optional: when absent the line is read in the
+   *  raw material's own stock unit, which is exactly the pre-Sprint-2
+   *  contract — so every recipe saved before this field existed keeps
+   *  computing identically and no migration is needed. Must be compatible
+   *  with the material's stock unit (same family); lib/utils/recipeCost.ts
+   *  converts it and surfaces any line it cannot. */
+  unit?: string;
 }
 
 export interface Recipe {
