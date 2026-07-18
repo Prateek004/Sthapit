@@ -4,6 +4,8 @@ import { useApp } from "@/lib/store/AppContext";
 import AppShell from "@/components/ui/AppShell";
 import { dbGetAllOrders, dbGetAllRawMaterials, dbGetAllRecipes } from "@/lib/db";
 import type { Order, RawMaterial, Recipe } from "@/lib/types";
+import { ingredientQtyInStockUnit } from "@/lib/utils/recipeCost";
+import { unitLabel } from "@/lib/utils/units";
 import { Loader2, Lock, AlertTriangle, Info } from "lucide-react";
 
 /**
@@ -80,17 +82,21 @@ export default function ConsumptionPage() {
       }
     }
 
-    // theoretical use per raw material
+    // theoretical use per raw material — every recipe line is converted into
+    // the material's own stock unit first (a line written in grams must never
+    // be counted against stock held in Kg). Lines whose unit cannot convert
+    // are excluded rather than guessed; the Recipes editor flags them.
+    const materialById = new Map(materials.map((m) => [m.id, m]));
     const usePerMaterial = new Map<string, number>();
-    const coveredMenuItems = new Set<string>();
     for (const rec of recipes) {
       const plates = soldByMenuItem.get(rec.menuItemId) ?? 0;
       if (plates <= 0) continue;
-      coveredMenuItems.add(rec.menuItemId);
       for (const ing of rec.ingredients) {
+        const perPlate = ingredientQtyInStockUnit(ing, materialById.get(ing.rawMaterialId));
+        if (perPlate === null || !(perPlate > 0)) continue;
         usePerMaterial.set(
           ing.rawMaterialId,
-          (usePerMaterial.get(ing.rawMaterialId) ?? 0) + plates * ing.qtyPerUnit
+          (usePerMaterial.get(ing.rawMaterialId) ?? 0) + plates * perPlate
         );
       }
     }
@@ -201,8 +207,8 @@ export default function ConsumptionPage() {
                             {material.name}
                           </div>
                           <div style={{ fontSize: 11, color: "#9C8E87", marginTop: 2 }}>
-                            using ~{Math.round(weeklyUse * 10) / 10} {material.unit}/week
-                            {" · "}~{Math.round(dailyRate * 10) / 10} {material.unit}/day
+                            using ~{Math.round(weeklyUse * 10) / 10} {unitLabel(material.unit)}/week
+                            {" · "}~{Math.round(dailyRate * 10) / 10} {unitLabel(material.unit)}/day
                           </div>
                         </div>
                         <div style={{ textAlign: "right" }}>
@@ -213,14 +219,14 @@ export default function ConsumptionPage() {
                             {daysLeft === null ? "—" : `${Math.floor(daysLeft * 10) / 10} days`}
                           </div>
                           <div style={{ fontSize: 11, color: "#9C8E87" }}>
-                            {material.currentStock} {material.unit} on hand
+                            {material.currentStock} {unitLabel(material.unit)} on hand
                           </div>
                         </div>
                       </div>
                       {reorder && (
                         <div style={{ marginTop: 10, background: "#FDEEEE", borderRadius: 10, padding: "8px 12px", fontSize: 12, color: "#C0392B", fontWeight: 600 }}>
                           Reorder now — at the current pace this runs out within {LEAD_TIME_DAYS} days.
-                          Suggested order: ~{Math.ceil(dailyRate * WINDOW_DAYS)} {material.unit} (one week of use).
+                          Suggested order: ~{Math.ceil(dailyRate * WINDOW_DAYS)} {unitLabel(material.unit)} (one week of use).
                         </div>
                       )}
                     </div>
