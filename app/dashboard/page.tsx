@@ -1,10 +1,19 @@
 "use client";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useApp } from "@/lib/store/AppContext";
 import AppShell from "@/components/ui/AppShell";
-import { fmtRupee, todayStr, dateStrIST, PAY_LABEL } from "@/lib/utils";
-import type { Order } from "@/lib/types";
-import { Banknote, Smartphone, ShoppingBag, Bell, Printer } from "lucide-react";
+import { fmtRupee, todayStr, dateStrIST, PAY_LABEL, isLowStock, HIDE_FRANCHISE } from "@/lib/utils";
+import { effectiveUnitCostPaise } from "@/lib/utils/units";
+import { computeRecipeCost } from "@/lib/utils/recipeCost";
+import { STOCK_UPDATED_EVENT } from "@/lib/utils/stockEngine";
+import type { Order, RawMaterial, FinishedGood, Recipe } from "@/lib/types";
+import { Banknote, Smartphone, ShoppingBag, Bell, Printer, Package, Boxes, Wine, AlertTriangle, Link2, ChevronRight, Wallet } from "lucide-react";
+
+/** Inventory Sprint 3 — bar tab is shown only when barEnabled AND the business
+ *  type qualifies. Mirrors app/stock/page.tsx exactly so the two never diverge. */
+const BAR_BIZ = ["cafe", "restaurant", "franchise"].filter(
+  (t) => !HIDE_FRANCHISE || t !== "franchise"
+);
 
 function DonutChart({ segments }: { segments: { color: string; value: number }[] }) {
   const total = segments.reduce((s, x) => s + x.value, 0) || 1;
@@ -59,9 +68,51 @@ export default function DashboardPage() {
   const uid = state.session?.businessId ?? "default";
   const [allOrders, setAllOrders] = useState<Order[]>([]);
 
+  // Inventory Sprint 3 — Dashboard inventory summary. Reads the same stores the
+  // Stock/Recipes pages read; nothing here writes. Refreshes when the menu
+  // changes and whenever stockEngine fires STOCK_UPDATED_EVENT (a sale, a
+  // recipe save, an ingredient edit), so the tiles stay live without polling.
+  const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([]);
+  const [finishedGoods, setFinishedGoods] = useState<FinishedGood[]>([]);
+  const [barItems, setBarItems] = useState<FinishedGood[]>([]);
+  const [recipes, setRecipes] = useState<Recipe[]>([]);
+
   useEffect(() => {
     import("@/lib/db").then(({ dbGetAllOrders }) => dbGetAllOrders(uid).then(setAllOrders));
   }, [state.orders, uid]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      const db = await import("@/lib/db");
+      const [raws, fins, bars, recs] = await Promise.all([
+        db.dbGetAllRawMaterials(uid),
+        db.dbGetAllFinishedGoods(uid),
+        db.dbGetAllBarItems(uid),
+        db.dbGetAllRecipes(uid),
+      ]);
+      if (cancelled) return;
+      setRawMaterials(raws);
+      setFinishedGoods(fins);
+      setBarItems(bars);
+      setRecipes(recs);
+    };
+    load().catch((err) => console.error("[dashboard] inventory load failed", err));
+    const onStockUpdated = () => load().catch(() => {});
+    if (typeof window !== "undefined") {
+      window.addEventListener(STOCK_UPDATED_EVENT, onStockUpdated);
+    }
+    return () => {
+      cancelled = true;
+      if (typeof window !== "undefined") {
+        window.removeEventListener(STOCK_UPDATED_EVENT, onStockUpdated);
+      }
+    };
+  }, [uid, state.menuItems]);
+
+  const barActive =
+    (state.session?.stockSettings?.barEnabled ?? false) &&
+    BAR_BIZ.includes(state.session?.businessType ?? "");
 
   const today = todayStr();
   const todayOrders = allOrders.filter((o) => dateStrIST(o.createdAt) === today);
@@ -111,6 +162,101 @@ export default function DashboardPage() {
   });
   const bizName = state.session?.businessName ?? "Business";
 
+  // ── Inventory Sprint 3 — the six dashboard metrics, all from live data ──
+  // "Untracked / pending mapping" reuses stockEngine's exact definition: a
+  // menu item with NEITHER a recipe NOR a manual pre-prepared pool sells
+  // without ever touching inventory. Inventory value only sums items whose
+  // cost is actually known — a guessed value would be worse than an honest
+  // partial one, so uncosted items are counted separately, never assumed ₹0.
+  const inv = useMemo(() => {
+    const menuItems = state.menuItems;
+    const materialById = new Map(rawMaterials.map((r) => [r.id, r]));
+    const recipeByMenu = new Map(recipes.map((r) => [r.menuItemId, r]));
+
+    // Low / out of stock
+    const rawOut = rawMaterials.filter((r) => r.currentStock <= 0);
+    const rawLow = rawMaterials.filter((r) => r.currentStock > 0 && isLowStock(r));
+    const finOut = finishedGoods.filter((f) => f.quantity <= 0);
+    const barOut = barActive ? barItems.filter((b) => b.quantity <= 0) : [];
+    const outOfStockCount = rawOut.length + finOut.length + barOut.length;
+
+    // Inventory value (integer paise) — only items with a known cost
+    let valuePaise = 0;
+    let valuedCount = 0;
+    let uncostedCount = 0;
+    for (const r of rawMaterials) {
+      const c = effectiveUnitCostPaise(r);
+      if (c == null) { uncostedCount += 1; continue; }
+      valuePaise += Math.round(c * Math.max(0, r.currentStock));
+      valuedCount += 1;
+    }
+    const perishables = [...finishedGoods, ...(barActive ? barItems : [])];
+    for (const f of perishables) {
+      if (f.costPricePaise == null) { uncostedCount += 1; continue; }
+      valuePaise += Math.round(f.costPricePaise * Math.max(0, f.quantity));
+      valuedCount += 1;
+    }
+
+    // Recipe status
+    let withRecipe = 0;
+    let completeCost = 0;
+    let incompleteCost = 0;
+    for (const m of menuItems) {
+      const rec = recipeByMenu.get(m.id);
+      if (!rec || rec.ingredients.length === 0) continue;
+      withRecipe += 1;
+      if (computeRecipeCost(rec, materialById).complete) completeCost += 1;
+      else incompleteCost += 1;
+    }
+
+    // Pending mapping — untracked menu items (no recipe AND no manual pool)
+    const pending = menuItems.filter((m) => {
+      const rec = recipeByMenu.get(m.id);
+      const hasRecipe = !!rec && rec.ingredients.length > 0;
+      return !hasRecipe && !m.manualStockOverride;
+    });
+
+    // Expiry (finished + bar)
+    const soonStr = dateStrIST(new Date(Date.now() + 3 * 86400000));
+    const expired = perishables.filter((x) => x.expiryDate && x.expiryDate < today);
+    const expiringSoon = perishables.filter(
+      (x) => x.expiryDate && x.expiryDate >= today && x.expiryDate <= soonStr
+    );
+
+    const barCount = barActive ? barItems.length : 0;
+    const totalItems = rawMaterials.length + finishedGoods.length + barCount;
+
+    // Alerts — every actionable signal, each linking to where it's fixed
+    const alerts: { key: string; label: string; count: number; href: string }[] = [
+      { key: "out",   label: "Out of stock",            count: outOfStockCount,   href: "/stock" },
+      { key: "low",   label: "Low stock",               count: rawLow.length,     href: "/stock" },
+      { key: "exp",   label: "Expired items",           count: expired.length,    href: "/stock" },
+      { key: "soon",  label: "Expiring within 3 days",  count: expiringSoon.length, href: "/stock" },
+      { key: "cost",  label: "Recipes with no cost yet", count: incompleteCost,   href: "/recipes" },
+      { key: "map",   label: "Menu items not mapped",   count: pending.length,    href: "/recipes" },
+    ].filter((a) => a.count > 0);
+    const alertTotal = alerts.reduce((s, a) => s + a.count, 0);
+
+    return {
+      totalItems,
+      rawCount: rawMaterials.length,
+      finCount: finishedGoods.length,
+      barCount,
+      lowCount: rawLow.length,
+      outOfStockCount,
+      valuePaise,
+      valuedCount,
+      uncostedCount,
+      menuTotal: menuItems.length,
+      withRecipe,
+      completeCost,
+      incompleteCost,
+      pendingCount: pending.length,
+      alerts,
+      alertTotal,
+    };
+  }, [state.menuItems, rawMaterials, finishedGoods, barItems, recipes, barActive, today]);
+
   /* ── Brand tokens (aligned with landing page design system) ── */
   const coal   = "#1A1208"; // headlines, primary text
   const smoke  = "#3D2E1E"; // secondary text
@@ -157,15 +303,34 @@ export default function DashboardPage() {
           </div>
           <button
             aria-label="Notifications"
+            onClick={() => {
+              if (typeof document !== "undefined") {
+                document.getElementById("inventory-health")?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }
+            }}
             style={{
               width: 36, height: 36, borderRadius: 10,
               border: "1px solid " + ember,
               background: "white", cursor: "pointer",
               display: "flex", alignItems: "center", justifyContent: "center",
               transition: "background 0.15s, border-color 0.15s",
+              position: "relative",
             }}
           >
             <Bell size={15} color={smoke} />
+            {inv.alertTotal > 0 && (
+              <span
+                aria-hidden
+                style={{
+                  position: "absolute", top: -4, right: -4, minWidth: 16, height: 16,
+                  padding: "0 4px", borderRadius: 8, background: fire, color: "white",
+                  fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center",
+                  justifyContent: "center", lineHeight: 1,
+                }}
+              >
+                {inv.alertTotal > 99 ? "99+" : inv.alertTotal}
+              </span>
+            )}
           </button>
         </div>
 
@@ -262,6 +427,148 @@ export default function DashboardPage() {
               <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 22, fontWeight: 700, color: coal, letterSpacing: "-0.02em" }}>{todayOrders.length}</div>
               <div style={{ fontSize: 11, color: ash, marginTop: 4, fontWeight: 500 }}>
                 {new Date().toLocaleDateString("en-IN", { weekday: "short" })}
+              </div>
+            </div>
+          </div>
+
+          {/* ── Inventory Sprint 3: Inventory health ── */}
+          <div id="inventory-health" style={{ scrollMarginTop: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 20, marginBottom: 4 }}>
+              <span style={{ fontFamily: "'Syne', sans-serif", fontSize: 16, fontWeight: 700, color: coal, letterSpacing: "-0.02em" }}>
+                Inventory health
+              </span>
+              <a href="/stock" style={{ fontSize: 11, color: fireDark, textDecoration: "none", fontWeight: 600 }}>Open Stock →</a>
+            </div>
+
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-3">
+              {/* Inventory value */}
+              <div style={card}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                  <Wallet size={13} color={ash} />
+                  <span style={{ fontSize: 10, color: ash, letterSpacing: "0.1em", fontWeight: 600 }}>INVENTORY VALUE</span>
+                </div>
+                <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 20, fontWeight: 700, color: coal, letterSpacing: "-0.02em" }}>
+                  {fmtRupee(inv.valuePaise)}
+                </div>
+                <div style={{ fontSize: 11, color: ash, marginTop: 4, fontWeight: 500 }}>
+                  {inv.valuedCount} item{inv.valuedCount !== 1 ? "s" : ""} valued
+                  {inv.uncostedCount > 0 && ` · ${inv.uncostedCount} without cost`}
+                </div>
+              </div>
+
+              {/* Low / out of stock */}
+              <div style={card}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                  <AlertTriangle size={13} color={inv.outOfStockCount > 0 ? fireDark : ash} />
+                  <span style={{ fontSize: 10, color: ash, letterSpacing: "0.1em", fontWeight: 600 }}>STOCK ALERTS</span>
+                </div>
+                <div style={{ display: "flex", gap: 16 }}>
+                  <div>
+                    <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 20, fontWeight: 700, color: inv.outOfStockCount > 0 ? fireDark : coal, letterSpacing: "-0.02em" }}>
+                      {inv.outOfStockCount}
+                    </div>
+                    <div style={{ fontSize: 10, color: ash, marginTop: 2, fontWeight: 500 }}>out of stock</div>
+                  </div>
+                  <div>
+                    <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 20, fontWeight: 700, color: inv.lowCount > 0 ? "#B8860B" : coal, letterSpacing: "-0.02em" }}>
+                      {inv.lowCount}
+                    </div>
+                    <div style={{ fontSize: 10, color: ash, marginTop: 2, fontWeight: 500 }}>low stock</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Recipe status */}
+              <div style={card}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                  <Boxes size={13} color={ash} />
+                  <span style={{ fontSize: 10, color: ash, letterSpacing: "0.1em", fontWeight: 600 }}>RECIPE STATUS</span>
+                </div>
+                <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 20, fontWeight: 700, color: coal, letterSpacing: "-0.02em" }}>
+                  {inv.withRecipe}<span style={{ fontSize: 13, color: ash, fontWeight: 500 }}>/{inv.menuTotal}</span>
+                </div>
+                <div style={{ fontSize: 11, color: ash, marginTop: 4, fontWeight: 500 }}>
+                  have recipes
+                  {inv.incompleteCost > 0 && <span style={{ color: "#B8860B" }}> · {inv.incompleteCost} unpriced</span>}
+                </div>
+              </div>
+
+              {/* Pending mapping */}
+              <div style={card}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                  <Link2 size={13} color={inv.pendingCount > 0 ? "#B8860B" : ash} />
+                  <span style={{ fontSize: 10, color: ash, letterSpacing: "0.1em", fontWeight: 600 }}>PENDING MAPPING</span>
+                </div>
+                <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 20, fontWeight: 700, color: inv.pendingCount > 0 ? "#B8860B" : veg, letterSpacing: "-0.02em" }}>
+                  {inv.pendingCount}
+                </div>
+                <div style={{ fontSize: 11, color: ash, marginTop: 4, fontWeight: 500 }}>
+                  {inv.pendingCount === 0 ? "all items linked" : "not linked to stock"}
+                </div>
+              </div>
+            </div>
+
+            {/* Inventory summary + Alerts */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
+              {/* Inventory summary */}
+              <div style={card}>
+                <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 14, fontWeight: 700, color: coal, letterSpacing: "-0.01em", marginBottom: 14 }}>
+                  Inventory summary
+                </div>
+                {[
+                  { icon: <Package size={15} color={fireDark} />, label: "Raw materials", value: inv.rawCount, bg: fire50 },
+                  { icon: <Boxes size={15} color="#7B52B8" />, label: "Finished goods", value: inv.finCount, bg: "#F5F0FA" },
+                  ...(barActive ? [{ icon: <Wine size={15} color={veg} />, label: "Bar items", value: inv.barCount, bg: "#EAF5EA" }] : []),
+                ].map((row, i, arr) => (
+                  <div key={row.label} style={{
+                    display: "flex", alignItems: "center", gap: 12, padding: "10px 0",
+                    borderBottom: i < arr.length - 1 ? `1px solid ${ember}` : "none",
+                  }}>
+                    <div style={{ width: 32, height: 32, borderRadius: 9, background: row.bg, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      {row.icon}
+                    </div>
+                    <span style={{ fontSize: 13, color: smoke, flex: 1, fontWeight: 500 }}>{row.label}</span>
+                    <span style={{ fontFamily: "'Syne', sans-serif", fontSize: 16, fontWeight: 700, color: coal }}>{row.value}</span>
+                  </div>
+                ))}
+                <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${ember}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontSize: 12, color: ash, fontWeight: 600 }}>Total tracked items</span>
+                  <span style={{ fontFamily: "'Syne', sans-serif", fontSize: 16, fontWeight: 700, color: coal }}>{inv.totalItems}</span>
+                </div>
+              </div>
+
+              {/* Alerts / Notifications */}
+              <div style={card}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+                  <span style={{ fontFamily: "'Syne', sans-serif", fontSize: 14, fontWeight: 700, color: coal, letterSpacing: "-0.01em" }}>
+                    Alerts &amp; notifications
+                  </span>
+                  {inv.alertTotal > 0 && (
+                    <span style={{ fontSize: 11, fontWeight: 700, color: "white", background: fire, borderRadius: 8, padding: "2px 8px" }}>
+                      {inv.alertTotal}
+                    </span>
+                  )}
+                </div>
+                {inv.alerts.length === 0 ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "16px 0" }}>
+                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: veg, flexShrink: 0 }} />
+                    <span style={{ fontSize: 13, color: ash }}>All clear — nothing needs attention.</span>
+                  </div>
+                ) : (
+                  inv.alerts.map((a, i) => (
+                    <a key={a.key} href={a.href} style={{
+                      display: "flex", alignItems: "center", gap: 12, padding: "10px 0", textDecoration: "none",
+                      borderBottom: i < inv.alerts.length - 1 ? `1px solid ${ember}` : "none",
+                    }}>
+                      <div style={{ width: 28, height: 28, borderRadius: 8, background: fire50, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <AlertTriangle size={13} color={fireDark} />
+                      </div>
+                      <span style={{ fontSize: 13, color: smoke, flex: 1, fontWeight: 500 }}>{a.label}</span>
+                      <span style={{ fontFamily: "'Syne', sans-serif", fontSize: 14, fontWeight: 700, color: fireDark }}>{a.count}</span>
+                      <ChevronRight size={14} color={ash} />
+                    </a>
+                  ))
+                )}
               </div>
             </div>
           </div>
