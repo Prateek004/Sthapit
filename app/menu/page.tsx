@@ -4,6 +4,7 @@ import { useApp } from "@/lib/store/AppContext";
 import AppShell from "@/components/ui/AppShell";
 import Toggle from "@/components/ui/Toggle";
 import ItemEditModal from "@/components/menu/ItemEditModal";
+import RecipeSuggestionModal from "@/components/menu/RecipeSuggestionModal";
 import CatEditModal from "@/components/menu/CatEditModal";
 import CatDeleteModal from "@/components/menu/CatDeleteModal";
 import { fmtRupee } from "@/lib/utils";
@@ -18,6 +19,7 @@ export default function MenuPage() {
   const [expandedCats, setExpandedCats] = useState<Set<string>>(new Set(categories.map((c) => c.id)));
   const [editItem, setEditItem] = useState<Partial<MenuItem> | null>(null);
   const [editCat, setEditCat] = useState<Partial<MenuCategory> | null>(null);
+  const [suggestFor, setSuggestFor] = useState<MenuItem | null>(null);
   const [deleteCat, setDeleteCat] = useState<MenuCategory | null>(null);
   const [catDeleteBusy, setCatDeleteBusy] = useState(false);
 
@@ -34,9 +36,15 @@ export default function MenuPage() {
   const openNewCat = () => setEditCat({ name: "", sortOrder: categories.length });
 
   const handleSaveItem = async (item: MenuItem) => {
+    const isNew = !editItem?.id;
     await upsertMenuItem(item);
-    showToast(editItem?.id ? "Item updated" : "Item added");
+    showToast(isNew ? "Item added" : "Item updated");
     setEditItem(null);
+    // Recipe AI (Sprint 2): only on genuinely NEW items, offer a reviewed
+    // recipe suggestion. The modal is provider-gated — with no AI configured
+    // (the shipped default) it says so plainly and writes nothing. Editing an
+    // existing item never re-triggers this.
+    if (isNew) setSuggestFor(item);
   };
 
   const handleDeleteItem = async (id: string) => {
@@ -235,6 +243,13 @@ export default function MenuPage() {
         onReassign={handleReassignAndDelete}
         onDeleteAll={handleDeleteCatWithItems}
       />
+      {suggestFor && (
+        <RecipeSuggestionModal
+          key={suggestFor.id}
+          item={suggestFor}
+          onClose={() => setSuggestFor(null)}
+        />
+      )}
     </AppShell>
   );
 }
