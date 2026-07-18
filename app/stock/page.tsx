@@ -5,6 +5,8 @@ import AppShell from "@/components/ui/AppShell";
 import Modal from "@/components/ui/Modal";
 import { fmtRupee, HIDE_FRANCHISE, todayStr, dateStrIST, isLowStock } from "@/lib/utils";
 import { UNIT_DEFS, getUnitDef, costPerUnitPaise, effectiveUnitCostPaise } from "@/lib/utils/units";
+import { syncMenuCostsFromRecipes } from "@/lib/utils/recipeCost";
+import { STOCK_UPDATED_EVENT } from "@/lib/utils/stockEngine";
 import type { RawMaterial, FinishedGood, StockCategory, StockCategoryKind } from "@/lib/types";
 import {
   Plus,
@@ -661,12 +663,25 @@ export default function StockPage() {
     [uid, showToast]
   );
 
+  /** Inventory Sprint 2 — Inventory → Cost → Menu Item.
+   *  An ingredient's price or unit changing silently re-prices every menu item
+   *  whose recipe uses it, and refreshes the POS stock badges. Never throws:
+   *  syncMenuCostsFromRecipes swallows and logs its own failures, so a costing
+   *  hiccup can never make a successful stock save look like a failure. */
+  const propagateInventoryChange = useCallback(async () => {
+    await syncMenuCostsFromRecipes(uid);
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new Event(STOCK_UPDATED_EVENT));
+    }
+  }, [uid]);
+
   const handleSaveRaw = async (item: RawMaterial) => {
     const { dbSaveRawMaterial, dbGetAllRawMaterials } = await import("@/lib/db");
     await dbSaveRawMaterial(item, uid);
     setRawMaterials(await dbGetAllRawMaterials(uid));
     showToast(editRaw?.id ? "Updated" : "Added");
     setEditRaw(null);
+    await propagateInventoryChange();
   };
 
   const handleDeleteRaw = async (id: string) => {
@@ -675,6 +690,7 @@ export default function StockPage() {
     await dbDeleteRawMaterial(id, uid);
     setRawMaterials(await dbGetAllRawMaterials(uid));
     showToast("Deleted");
+    await propagateInventoryChange();
   };
 
   const handleSaveFinished = async (item: FinishedGood) => {
