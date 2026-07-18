@@ -242,12 +242,25 @@ export interface RecipeIngredient {
   unit?: string;
 }
 
+/** How a recipe was authored — manual entry vs an accepted AI suggestion. */
+export type RecipeSource = "manual" | "ai_suggested";
+
 export interface Recipe {
   /** id === menuItemId, so saving is an idempotent upsert */
   id: string;
   menuItemId: string;
   ingredients: RecipeIngredient[];
   updatedAt: string;
+  /** Recipe AI (Sprint 2) — optional metadata captured from an accepted AI
+   *  suggestion. All optional and never required by costing or stock logic,
+   *  which only read `ingredients`; these enrich the Recipes UI and future
+   *  yield reporting. Recipes saved before these fields existed simply omit
+   *  them, so no migration is needed. */
+  yieldQty?: number;
+  yieldUnit?: string;
+  preparationNotes?: string;
+  typicalWastePercent?: number;
+  source?: RecipeSource;
 }
 
 /** G1: a recorded vendor purchase — from OCR scan or manual entry. */
