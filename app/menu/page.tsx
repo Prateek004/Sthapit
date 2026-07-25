@@ -22,6 +22,7 @@ export default function MenuPage() {
   const [suggestFor, setSuggestFor] = useState<MenuItem | null>(null);
   const [deleteCat, setDeleteCat] = useState<MenuCategory | null>(null);
   const [catDeleteBusy, setCatDeleteBusy] = useState(false);
+  const [dietFilter, setDietFilter] = useState<"all" | "veg" | "non-veg">("all");
 
   const toggleCat = (id: string) =>
     setExpandedCats((prev) => {
@@ -31,7 +32,7 @@ export default function MenuPage() {
     });
 
   const openNewItem = (categoryId: string) =>
-    setEditItem({ categoryId, isVeg: true, isAvailable: true, addOns: [], pricePaise: 0, portionEnabled: false, portions: [], sizes: [] });
+    setEditItem({ categoryId, isVeg: true, isAvailable: true, addOns: [], pricePaise: 0, portionEnabled: true, portions: [], sizes: [] });
 
   const openNewCat = () => setEditCat({ name: "", sortOrder: categories.length });
 
@@ -132,18 +133,55 @@ export default function MenuPage() {
       <div className="min-h-screen bg-gray-50">
         {/* Header */}
         <div className="bg-white px-4 lg:px-8 pt-12 lg:pt-6 pb-0 shadow-sm">
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
             <h1 className="text-xl font-black text-gray-900">Menu</h1>
-            {isOwner && (
-              <div className="flex gap-2">
-                <button onClick={openNewCat} className="flex items-center gap-1 text-sm font-bold text-gray-600 border border-gray-200 px-3 py-1.5 rounded-xl press">
-                  <FolderPlus size={15} /> Category
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 bg-gray-50 p-1 rounded-xl border border-gray-100">
+                <button
+                  onClick={() => setDietFilter("all")}
+                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all press ${
+                    dietFilter === "all"
+                      ? "bg-gray-900 text-white shadow-xs"
+                      : "text-gray-600 hover:bg-gray-200/60"
+                  }`}
+                >
+                  All
                 </button>
-                <button onClick={() => openNewItem(categories[0]?.id ?? "")} className="flex items-center gap-1.5 bg-primary-500 text-white text-sm font-bold px-3 py-2 rounded-xl press shadow-sm">
-                  <Plus size={15} /> Item
+                <button
+                  onClick={() => setDietFilter("veg")}
+                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all press flex items-center gap-1.5 ${
+                    dietFilter === "veg"
+                      ? "bg-emerald-600 text-white shadow-xs"
+                      : "text-emerald-700 hover:bg-emerald-50"
+                  }`}
+                >
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block border border-white" />
+                  Veg
+                </button>
+                <button
+                  onClick={() => setDietFilter("non-veg")}
+                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all press flex items-center gap-1.5 ${
+                    dietFilter === "non-veg"
+                      ? "bg-rose-600 text-white shadow-xs"
+                      : "text-rose-700 hover:bg-rose-50"
+                  }`}
+                >
+                  <span className="w-2 h-2 rounded-full bg-rose-500 inline-block border border-white" />
+                  Non-Veg
                 </button>
               </div>
-            )}
+
+              {isOwner && (
+                <div className="flex gap-2">
+                  <button onClick={openNewCat} className="flex items-center gap-1 text-sm font-bold text-gray-600 border border-gray-200 px-3 py-1.5 rounded-xl press">
+                    <FolderPlus size={15} /> Category
+                  </button>
+                  <button onClick={() => openNewItem(categories[0]?.id ?? "")} className="flex items-center gap-1.5 bg-primary-500 text-white text-sm font-bold px-3 py-2 rounded-xl press shadow-sm">
+                    <Plus size={15} /> Item
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
           <div className="pb-3" />
         </div>
@@ -157,7 +195,12 @@ export default function MenuPage() {
             </div>
           ) : (
             categories.map((cat) => {
-              const items = menuItems.filter((i) => i.categoryId === cat.id);
+              const items = menuItems.filter((i) => {
+                if (i.categoryId !== cat.id) return false;
+                if (dietFilter === "veg" && !i.isVeg) return false;
+                if (dietFilter === "non-veg" && i.isVeg) return false;
+                return true;
+              });
               const open = expandedCats.has(cat.id);
               return (
                 <div key={cat.id} className="bg-white rounded-2xl shadow-sm overflow-hidden">

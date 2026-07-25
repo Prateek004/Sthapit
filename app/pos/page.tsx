@@ -20,6 +20,7 @@ export default function POSPage() {
   const activeCat = posActiveCat;
   const [configItem, setConfigItem] = useState<MenuItem | null>(null);
   const [search, setSearch] = useState("");
+  const [dietFilter, setDietFilter] = useState<"all" | "veg" | "non-veg">("all");
   const [cartOpen, setCartOpen] = useState(false);
 
   useEffect(() => {
@@ -29,9 +30,13 @@ export default function POSPage() {
   const filteredItems = menuItems
     .filter((item) => {
       const catOk = activeCat === "all" || item.categoryId === activeCat;
+      const dietOk =
+        dietFilter === "all" ||
+        (dietFilter === "veg" && item.isVeg) ||
+        (dietFilter === "non-veg" && !item.isVeg);
       const searchOk =
         !search || item.name.toLowerCase().includes(search.toLowerCase());
-      return catOk && searchOk;
+      return catOk && dietOk && searchOk;
     })
     .sort((a, b) => Number(b.isAvailable) - Number(a.isAvailable));
 
@@ -77,18 +82,6 @@ export default function POSPage() {
       >
         {/* ── Menu panel ── */}
         <div className="flex flex-col overflow-hidden flex-1 min-w-0 relative">
-          <MenuPanel
-            bizName={session?.businessName}
-            categories={categories}
-            items={filteredItems}
-            activeCat={activeCat}
-            onCatChange={scrollCatIntoView}
-            search={search}
-            onSearch={setSearch}
-            onItemPress={setConfigItem}
-            mobileCompact
-          />
-
           {/* Mobile floating "View Cart" button */}
           {cartCount > 0 && (
             <button
@@ -106,6 +99,19 @@ export default function POSPage() {
               </span>
             </button>
           )}
+          <MenuPanel
+            bizName={session?.businessName}
+            categories={categories}
+            items={filteredItems}
+            activeCat={activeCat}
+            onCatChange={scrollCatIntoView}
+            dietFilter={dietFilter}
+            onDietFilterChange={setDietFilter}
+            search={search}
+            onSearch={setSearch}
+            onItemPress={setConfigItem}
+            mobileCompact
+          />
         </div>
 
         {/* ── Desktop cart panel ── */}
@@ -136,6 +142,8 @@ interface MenuPanelProps {
   items: MenuItem[];
   activeCat: string;
   onCatChange: (id: string) => void;
+  dietFilter: "all" | "veg" | "non-veg";
+  onDietFilterChange: (diet: "all" | "veg" | "non-veg") => void;
   search: string;
   onSearch: (s: string) => void;
   onItemPress: (item: MenuItem) => void;
@@ -148,6 +156,8 @@ function MenuPanel({
   items,
   activeCat,
   onCatChange,
+  dietFilter,
+  onDietFilterChange,
   search,
   onSearch,
   onItemPress,
@@ -174,7 +184,7 @@ function MenuPanel({
         </div>
 
         {/* Search */}
-        <div className="relative mb-3">
+        <div className="relative mb-2.5">
           <Search
             size={16}
             className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
@@ -193,6 +203,42 @@ function MenuPanel({
               <X size={14} />
             </button>
           )}
+        </div>
+
+        {/* Diet filter buttons (All / Veg Only / Non-Veg Only) */}
+        <div className="flex items-center gap-1.5 mb-2.5 overflow-x-auto no-scrollbar">
+          <button
+            onClick={() => onDietFilterChange("all")}
+            className={`px-3 py-1 rounded-xl text-xs font-bold transition-all press shrink-0 ${
+              dietFilter === "all"
+                ? "bg-gray-900 text-white shadow-xs"
+                : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+            }`}
+          >
+            All
+          </button>
+          <button
+            onClick={() => onDietFilterChange("veg")}
+            className={`px-3 py-1 rounded-xl text-xs font-bold transition-all press flex items-center gap-1.5 shrink-0 ${
+              dietFilter === "veg"
+                ? "bg-emerald-600 text-white shadow-xs ring-2 ring-emerald-600/20"
+                : "bg-emerald-50 text-emerald-700 border border-emerald-200/60 hover:bg-emerald-100"
+            }`}
+          >
+            <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block border border-white shrink-0" />
+            Veg Only
+          </button>
+          <button
+            onClick={() => onDietFilterChange("non-veg")}
+            className={`px-3 py-1 rounded-xl text-xs font-bold transition-all press flex items-center gap-1.5 shrink-0 ${
+              dietFilter === "non-veg"
+                ? "bg-rose-600 text-white shadow-xs ring-2 ring-rose-600/20"
+                : "bg-rose-50 text-rose-700 border border-rose-200/60 hover:bg-rose-100"
+            }`}
+          >
+            <span className="w-2 h-2 rounded-full bg-rose-500 inline-block border border-white shrink-0" />
+            Non-Veg Only
+          </button>
         </div>
 
         {/* Category pills */}
