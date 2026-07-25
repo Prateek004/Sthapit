@@ -11,6 +11,8 @@ import { useRouter, useParams } from "next/navigation";
 import { useApp } from "@/lib/store/AppContext";
 import { useTableStore, useTableOrder } from "@/lib/store/tableStore";
 import AppShell from "@/components/ui/AppShell";
+import DietFilter, { DietFilterValue } from "@/components/ui/DietFilter";
+import QtyStepper from "@/components/ui/QtyStepper";
 import type { MenuItem, AddOn, Order, PaymentMethod } from "@/lib/types";
 import type { StockShortfall } from "@/lib/utils/stockEngine";
 import { LOW_STOCK_BADGE_THRESHOLD } from "@/lib/utils/stockEngine";
@@ -64,7 +66,7 @@ interface MenuPanelProps {
 
 function MenuPanel({ categories, items, onItemPress }: MenuPanelProps) {
   const [activeCat, setActiveCat] = useState<string>("all");
-  const [dietFilter, setDietFilter] = useState<"all" | "veg" | "non-veg">("all");
+  const [dietFilter, setDietFilter] = useState<DietFilterValue>("all");
   const [search, setSearch] = useState("");
 
   const filtered = useMemo(
@@ -85,72 +87,39 @@ function MenuPanel({ categories, items, onItemPress }: MenuPanelProps) {
 
   return (
     <div className="flex flex-col h-full overflow-hidden" style={{ background: "#F5F0EB" }}>
-      {/* Search */}
+      {/* Search & Diet Filter */}
       <div className="px-3 pt-3 pb-2 shrink-0" style={{ background: "white" }}>
-        <div className="relative mb-2">
-          <Search
-            size={15}
-            className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
-            style={{ color: "#A89684" }}
-          />
-          <input
-            className="w-full h-10 pl-9 pr-9 rounded-xl text-sm font-medium outline-none transition-all"
-            style={{
-              background: "#F5F0EB",
-              border: "1.5px solid transparent",
-              color: "#1A1208",
-            }}
-            placeholder="Search menu…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            onFocus={(e) => (e.target.style.borderColor = "#E8590C")}
-            onBlur={(e) => (e.target.style.borderColor = "transparent")}
-          />
-          {search && (
-            <button
-              onClick={() => setSearch("")}
-              className="absolute right-3 top-1/2 -translate-y-1/2 press"
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 mb-2">
+          <div className="relative flex-1">
+            <Search
+              size={15}
+              className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
               style={{ color: "#A89684" }}
-            >
-              <X size={14} />
-            </button>
-          )}
-        </div>
-
-        {/* Diet filter buttons (All / Veg Only / Non-Veg Only) */}
-        <div className="flex items-center gap-1.5 pt-1 pb-1 overflow-x-auto no-scrollbar">
-          <button
-            onClick={() => setDietFilter("all")}
-            className={`px-3 py-1 rounded-xl text-xs font-bold transition-all press shrink-0 ${
-              dietFilter === "all"
-                ? "bg-gray-900 text-white shadow-xs"
-                : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-            }`}
-          >
-            All
-          </button>
-          <button
-            onClick={() => setDietFilter("veg")}
-            className={`px-3 py-1 rounded-xl text-xs font-bold transition-all press flex items-center gap-1.5 shrink-0 ${
-              dietFilter === "veg"
-                ? "bg-emerald-600 text-white shadow-xs ring-2 ring-emerald-600/20"
-                : "bg-emerald-50 text-emerald-700 border border-emerald-200/60 hover:bg-emerald-100"
-            }`}
-          >
-            <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block border border-white shrink-0" />
-            Veg Only
-          </button>
-          <button
-            onClick={() => setDietFilter("non-veg")}
-            className={`px-3 py-1 rounded-xl text-xs font-bold transition-all press flex items-center gap-1.5 shrink-0 ${
-              dietFilter === "non-veg"
-                ? "bg-rose-600 text-white shadow-xs ring-2 ring-rose-600/20"
-                : "bg-rose-50 text-rose-700 border border-rose-200/60 hover:bg-rose-100"
-            }`}
-          >
-            <span className="w-2 h-2 rounded-full bg-rose-500 inline-block border border-white shrink-0" />
-            Non-Veg Only
-          </button>
+            />
+            <input
+              className="w-full h-10 pl-9 pr-9 rounded-xl text-sm font-medium outline-none transition-all"
+              style={{
+                background: "#F5F0EB",
+                border: "1.5px solid transparent",
+                color: "#1A1208",
+              }}
+              placeholder="Search menu…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onFocus={(e) => (e.target.style.borderColor = "#E8590C")}
+              onBlur={(e) => (e.target.style.borderColor = "transparent")}
+            />
+            {search && (
+              <button
+                onClick={() => setSearch("")}
+                className="absolute right-3 top-1/2 -translate-y-1/2 press"
+                style={{ color: "#A89684" }}
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+          <DietFilter value={dietFilter} onChange={setDietFilter} />
         </div>
 
         {/* Category pills */}
@@ -336,8 +305,8 @@ function ItemConfigSheet({ item, onClose, onConfirm }: ItemConfigProps) {
   const effectivePrice = selectedSize
     ? (item.sizes?.find((s) => s.label === selectedSize)?.pricePaise ?? item.pricePaise)
     : selectedPortion
-    ? (item.portions?.find((p) => p.label === selectedPortion)?.pricePaise ?? item.pricePaise)
-    : item.pricePaise;
+      ? (item.portions?.find((p) => p.label === selectedPortion)?.pricePaise ?? item.pricePaise)
+      : item.pricePaise;
 
   const addOnTotal = selectedAddOns.reduce((s, a) => s + a.pricePaise, 0);
   const lineTotal = effectivePrice + addOnTotal;
@@ -656,31 +625,14 @@ function TableCartPanel({
                 </button>
               </div>
               <div className="flex items-center justify-between">
-                <div
-                  className="flex items-center rounded-xl overflow-hidden border"
-                  style={{ borderColor: "#F0E8DF" }}
-                >
-                  <button
-                    onClick={() => updateItemQty(tableId, item.cartId, item.qty - 1)}
-                    className="w-8 h-8 flex items-center justify-center press"
-                    style={{ background: "white" }}
-                  >
-                    <Minus size={12} style={{ color: "#7A6456" }} />
-                  </button>
-                  <span
-                    className="w-7 text-center text-sm font-black"
-                    style={{ color: "#1A1208" }}
-                  >
-                    {item.qty}
-                  </span>
-                  <button
-                    onClick={() => updateItemQty(tableId, item.cartId, item.qty + 1)}
-                    className="w-8 h-8 flex items-center justify-center press"
-                    style={{ background: "#E8590C" }}
-                  >
-                    <Plus size={12} style={{ color: "white" }} />
-                  </button>
-                </div>
+                <QtyStepper
+                  value={item.qty}
+                  onChange={(newQty) => updateItemQty(tableId, item.cartId, newQty)}
+                  minusBg="white"
+                  plusBg="#E8590C"
+                  minusColor="#7A6456"
+                  plusColor="white"
+                />
                 <span className="text-sm font-black" style={{ color: "#1A1208" }}>
                   {fmtRupee(lineTotal)}
                 </span>
@@ -796,8 +748,8 @@ function TableCartPanel({
             {firingKot
               ? "Printing…"
               : order?.kotFiredAt
-              ? `KOT Printed${order.kotAutoPlaced ? " (auto)" : ""} ✓ — Reprint`
-              : "Print KOT"}
+                ? `KOT Printed${order.kotAutoPlaced ? " (auto)" : ""} ✓ — Reprint`
+                : "Print KOT"}
           </button>
         )}
 
@@ -846,9 +798,9 @@ function TableCartPanel({
 // ── Checkout flow ─────────────────────────────────────────────────────────────
 
 const PAY_METHODS: { id: PaymentMethod; label: string; Icon: React.ElementType }[] = [
-  { id: "cash",  label: "Cash",  Icon: Banknote   },
-  { id: "upi",   label: "UPI",   Icon: Smartphone },
-  { id: "split", label: "Split", Icon: Banknote   },
+  { id: "cash", label: "Cash", Icon: Banknote },
+  { id: "upi", label: "UPI", Icon: Smartphone },
+  { id: "split", label: "Split", Icon: Banknote },
 ];
 
 interface CheckoutSheetProps {
@@ -897,6 +849,20 @@ function CheckoutSheet({
   // Owners get a warning and proceed on the second tap; cashiers are blocked.
   const [stockWarnings, setStockWarnings] = useState<StockShortfall[] | null>(null);
   const stockAcknowledgedRef = useRef(false);
+  useEffect(() => {
+    setMethod("cash");
+    setCashInput("");
+    setSplitCash("");
+    setSplitUpi("");
+    setUpiConfirmed(false);
+    setPlacing(false);
+    placingRef.current = false;
+    setPlacedOrder(null);
+    setQrSrc("");
+    setShowUpiQr(false);
+    setStockWarnings(null);
+    stockAcknowledgedRef.current = false;
+  }, [order?.id]);
 
   const hasUpi = Boolean(upiId);
   const items = order?.items ?? [];
@@ -1028,7 +994,7 @@ function CheckoutSheet({
         const { getNextBillCounterFromSupabase } = await import("@/lib/supabase/sync");
         const remote = await getNextBillCounterFromSupabase(businessId);
         if (remote !== null) billNumber = `#${String(remote).padStart(4, "0")}`;
-      } catch {}
+      } catch { }
 
       const finalOrder: Order = {
         id: crypto.randomUUID(),
@@ -1087,17 +1053,19 @@ function CheckoutSheet({
             }))
           )
         )
-        .catch(() => {});
+        .catch(() => { });
 
       notifyOrderPlaced(finalOrder);
       await clearOrder(tableId);
 
       import("@/lib/supabase/sync")
         .then(({ syncOrder }) => syncOrder(finalOrder, businessId))
-        .catch(() => {});
+        .catch(() => { });
 
       setPlacedOrder(finalOrder);
     } catch {
+      showToast("Payment processing failed. Try again.", "error");
+    } finally {
       placingRef.current = false;
       setPlacing(false);
     }
@@ -1355,8 +1323,8 @@ function CheckoutSheet({
                       cashInput !== "" && cashPaise < totalPaise
                         ? "#C0392B"
                         : cashInput !== "" && cashPaise >= totalPaise
-                        ? "#2D6A4F"
-                        : "#F0E8DF",
+                          ? "#2D6A4F"
+                          : "#F0E8DF",
                     color: "#1A1208",
                   }}
                   placeholder="Cash received (₹)"
@@ -1497,8 +1465,8 @@ function CheckoutSheet({
                   {splitOk
                     ? `Covered ✓ (${fmtRupee(splitTotal)})`
                     : splitTotal > 0
-                    ? `Short by ${fmtRupee(totalPaise - splitTotal)}`
-                    : `Need ${fmtRupee(totalPaise)}`}
+                      ? `Short by ${fmtRupee(totalPaise - splitTotal)}`
+                      : `Need ${fmtRupee(totalPaise)}`}
                 </div>
               </div>
             )}
@@ -1543,8 +1511,8 @@ function CheckoutSheet({
             {placing
               ? "Processing…"
               : stockWarnings && stockWarnings.length > 0
-              ? `Collect Anyway · ${fmtRupee(totalPaise)}`
-              : `Collect & Close · ${fmtRupee(totalPaise)}`}
+                ? `Collect Anyway · ${fmtRupee(totalPaise)}`
+                : `Collect & Close · ${fmtRupee(totalPaise)}`}
           </button>
         </div>
       </div>
@@ -1949,8 +1917,8 @@ function MobileTableView({
                   {firingKot
                     ? "Printing…"
                     : order?.kotFiredAt
-                    ? `KOT Printed${order.kotAutoPlaced ? " (auto)" : ""} ✓ — Reprint`
-                    : "Print KOT"}
+                      ? `KOT Printed${order.kotAutoPlaced ? " (auto)" : ""} ✓ — Reprint`
+                      : "Print KOT"}
                 </button>
               )}
               <button

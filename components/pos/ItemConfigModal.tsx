@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import Modal from "@/components/ui/Modal";
+import QtyStepper from "@/components/ui/QtyStepper";
 import { useApp } from "@/lib/store/AppContext";
 import type { MenuItem, AddOn } from "@/lib/types";
 import { fmtRupee } from "@/lib/utils";
@@ -188,21 +189,16 @@ export default function ItemConfigModal({ item, onClose }: Props) {
 
         {/* Qty + Add button */}
         <div className="flex items-center gap-3 pt-1">
-          <div className="flex items-center gap-2 bg-gray-100 rounded-2xl p-1">
-            <button
-              onClick={() => setQty((q) => Math.max(1, q - 1))}
-              className="w-10 h-10 rounded-xl bg-white shadow-sm flex items-center justify-center press"
-            >
-              <Minus size={16} />
-            </button>
-            <span className="w-7 text-center font-black text-lg">{qty}</span>
-            <button
-              onClick={() => setQty((q) => q + 1)}
-              className="w-10 h-10 rounded-xl bg-primary-500 flex items-center justify-center press"
-            >
-              <Plus size={16} className="text-white" />
-            </button>
-          </div>
+          <QtyStepper
+            value={qty}
+            onChange={(newQty) => setQty(Math.max(1, newQty))}
+            min={1}
+            size="lg"
+            minusBg="white"
+            plusBg="#E8590C"
+            minusColor="#374151"
+            plusColor="white"
+          />
           <button
             onClick={handleAdd}
             className="flex-1 h-12 bg-primary-500 text-white rounded-2xl font-bold flex items-center justify-between px-5 press shadow-md"

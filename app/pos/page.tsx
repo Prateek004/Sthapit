@@ -9,6 +9,7 @@ import ItemConfigModal from "@/components/pos/ItemConfigModal";
 import CartPanel from "@/components/pos/CartPanel";
 import AppShell from "@/components/ui/AppShell";
 import Modal from "@/components/ui/Modal";
+import DietFilter, { DietFilterValue } from "@/components/ui/DietFilter";
 import { fmtRupee, calcGST, calcDiscount } from "@/lib/utils";
 import { Search, X } from "lucide-react";
 
@@ -20,7 +21,7 @@ export default function POSPage() {
   const activeCat = posActiveCat;
   const [configItem, setConfigItem] = useState<MenuItem | null>(null);
   const [search, setSearch] = useState("");
-  const [dietFilter, setDietFilter] = useState<"all" | "veg" | "non-veg">("all");
+  const [dietFilter, setDietFilter] = useState<DietFilterValue>("all");
   const [cartOpen, setCartOpen] = useState(false);
 
   useEffect(() => {
@@ -142,8 +143,8 @@ interface MenuPanelProps {
   items: MenuItem[];
   activeCat: string;
   onCatChange: (id: string) => void;
-  dietFilter: "all" | "veg" | "non-veg";
-  onDietFilterChange: (diet: "all" | "veg" | "non-veg") => void;
+  dietFilter: DietFilterValue;
+  onDietFilterChange: (diet: DietFilterValue) => void;
   search: string;
   onSearch: (s: string) => void;
   onItemPress: (item: MenuItem) => void;
@@ -183,62 +184,29 @@ function MenuPanel({
           </div>
         </div>
 
-        {/* Search */}
-        <div className="relative mb-2.5">
-          <Search
-            size={16}
-            className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
-          />
-          <input
-            className="w-full h-10 pl-9 pr-9 rounded-xl bg-gray-100 text-sm font-medium outline-none focus:bg-white focus:ring-2 focus:ring-primary-200 transition-all"
-            placeholder="Search items…"
-            value={search}
-            onChange={(e) => onSearch(e.target.value)}
-          />
-          {search && (
-            <button
-              onClick={() => onSearch("")}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 press"
-            >
-              <X size={14} />
-            </button>
-          )}
-        </div>
-
-        {/* Diet filter buttons (All / Veg Only / Non-Veg Only) */}
-        <div className="flex items-center gap-1.5 mb-2.5 overflow-x-auto no-scrollbar">
-          <button
-            onClick={() => onDietFilterChange("all")}
-            className={`px-3 py-1 rounded-xl text-xs font-bold transition-all press shrink-0 ${
-              dietFilter === "all"
-                ? "bg-gray-900 text-white shadow-xs"
-                : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-            }`}
-          >
-            All
-          </button>
-          <button
-            onClick={() => onDietFilterChange("veg")}
-            className={`px-3 py-1 rounded-xl text-xs font-bold transition-all press flex items-center gap-1.5 shrink-0 ${
-              dietFilter === "veg"
-                ? "bg-emerald-600 text-white shadow-xs ring-2 ring-emerald-600/20"
-                : "bg-emerald-50 text-emerald-700 border border-emerald-200/60 hover:bg-emerald-100"
-            }`}
-          >
-            <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block border border-white shrink-0" />
-            Veg Only
-          </button>
-          <button
-            onClick={() => onDietFilterChange("non-veg")}
-            className={`px-3 py-1 rounded-xl text-xs font-bold transition-all press flex items-center gap-1.5 shrink-0 ${
-              dietFilter === "non-veg"
-                ? "bg-rose-600 text-white shadow-xs ring-2 ring-rose-600/20"
-                : "bg-rose-50 text-rose-700 border border-rose-200/60 hover:bg-rose-100"
-            }`}
-          >
-            <span className="w-2 h-2 rounded-full bg-rose-500 inline-block border border-white shrink-0" />
-            Non-Veg Only
-          </button>
+        {/* Search & Diet Filter */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 mb-2.5">
+          <div className="relative flex-1">
+            <Search
+              size={16}
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
+            />
+            <input
+              className="w-full h-10 pl-9 pr-9 rounded-xl bg-gray-100 text-sm font-medium outline-none focus:bg-white focus:ring-2 focus:ring-primary-200 transition-all"
+              placeholder="Search items…"
+              value={search}
+              onChange={(e) => onSearch(e.target.value)}
+            />
+            {search && (
+              <button
+                onClick={() => onSearch("")}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 press"
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+          <DietFilter value={dietFilter} onChange={onDietFilterChange} />
         </div>
 
         {/* Category pills */}

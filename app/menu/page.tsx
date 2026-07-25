@@ -11,6 +11,8 @@ import { fmtRupee } from "@/lib/utils";
 import type { MenuItem, MenuCategory } from "@/lib/types";
 import { Plus, Pencil, Trash2, ChevronDown, ChevronRight, FolderPlus } from "lucide-react";
 
+import DietFilter, { DietFilterValue } from "@/components/ui/DietFilter";
+
 export default function MenuPage() {
   const { state, upsertMenuItem, deleteMenuItem, upsertCategory, deleteCategory, showToast } = useApp();
   const { session, menuItems, categories } = state;
@@ -22,7 +24,7 @@ export default function MenuPage() {
   const [suggestFor, setSuggestFor] = useState<MenuItem | null>(null);
   const [deleteCat, setDeleteCat] = useState<MenuCategory | null>(null);
   const [catDeleteBusy, setCatDeleteBusy] = useState(false);
-  const [dietFilter, setDietFilter] = useState<"all" | "veg" | "non-veg">("all");
+  const [dietFilter, setDietFilter] = useState<DietFilterValue>("all");
 
   const toggleCat = (id: string) =>
     setExpandedCats((prev) => {
@@ -136,40 +138,7 @@ export default function MenuPage() {
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
             <h1 className="text-xl font-black text-gray-900">Menu</h1>
             <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1.5 bg-gray-50 p-1 rounded-xl border border-gray-100">
-                <button
-                  onClick={() => setDietFilter("all")}
-                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all press ${
-                    dietFilter === "all"
-                      ? "bg-gray-900 text-white shadow-xs"
-                      : "text-gray-600 hover:bg-gray-200/60"
-                  }`}
-                >
-                  All
-                </button>
-                <button
-                  onClick={() => setDietFilter("veg")}
-                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all press flex items-center gap-1.5 ${
-                    dietFilter === "veg"
-                      ? "bg-emerald-600 text-white shadow-xs"
-                      : "text-emerald-700 hover:bg-emerald-50"
-                  }`}
-                >
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block border border-white" />
-                  Veg
-                </button>
-                <button
-                  onClick={() => setDietFilter("non-veg")}
-                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all press flex items-center gap-1.5 ${
-                    dietFilter === "non-veg"
-                      ? "bg-rose-600 text-white shadow-xs"
-                      : "text-rose-700 hover:bg-rose-50"
-                  }`}
-                >
-                  <span className="w-2 h-2 rounded-full bg-rose-500 inline-block border border-white" />
-                  Non-Veg
-                </button>
-              </div>
+              <DietFilter value={dietFilter} onChange={setDietFilter} />
 
               {isOwner && (
                 <div className="flex gap-2">

@@ -89,6 +89,7 @@ export default function CheckoutModal({
       setSplitUpi("");
       setUpiConfirmed(false);
       setPlacing(false);
+      placingRef.current = false;
       setOrder(null);
       setQrSrc("");
       setShowUpiQr(false);
@@ -238,6 +239,7 @@ export default function CheckoutModal({
       setShowUpiQr(false);
     } catch {
       showToast("Order failed. Try again.", "error");
+    } finally {
       placingRef.current = false;
       setPlacing(false);
     }
