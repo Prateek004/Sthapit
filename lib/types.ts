@@ -3,7 +3,7 @@
 export type BusinessType = "cafe" | "restaurant" | "food_truck" | "kiosk" | "bakery" | "franchise";
 export type UserRole = "owner" | "cashier";
 export type ServiceMode = "dine_in" | "takeaway" | "delivery";
-export type PaymentMethod = "cash" | "upi" | "split";
+export type PaymentMethod = "cash" | "upi" | "card" | "credit_card" | "debit_card" | "split";
 export type TableStatus = "AVAILABLE" | "OCCUPIED";
 export type OrderStatus = "completed" | "voided" | "refunded";
 
@@ -295,12 +295,15 @@ export interface CartItem {
   selectedPortion?: string;
   selectedAddOns: AddOn[];
   notes?: string;
+  status?: "pending" | "placed";
 }
 
 export interface SplitPayment {
   cashPaise: number;
   upiPaise: number;
 }
+
+export type Denominations = Record<number, number>;
 
 export interface Order {
   id: string;
@@ -319,6 +322,7 @@ export interface Order {
   splitPayment?: SplitPayment;
   cashReceivedPaise?: number;
   changePaise?: number;
+  denominations?: Denominations;
   createdAt: string;
   syncStatus: "pending" | "synced" | "failed";
   status?: OrderStatus;
@@ -350,6 +354,7 @@ export interface TableOrderItem {
   selectedPortion?: string;
   selectedAddOns: AddOn[];
   notes?: string;
+  status?: "pending" | "placed";
 }
 
 export interface TableOrder {
@@ -379,6 +384,7 @@ export interface TableOrder {
   /** Order/KOT: true when kotFiredAt was set by the auto-placement timer rather
    *  than a manual "Print KOT" tap — purely informational, shown as a badge. */
   kotAutoPlaced?: boolean;
+  kotPrintCount?: number;
 }
 
 export interface RestaurantTable {

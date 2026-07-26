@@ -129,8 +129,27 @@ export default function DashboardPage() {
     .reduce((s, o) => s + (o.paymentMethod === "split" ? (o.splitPayment?.cashPaise ?? 0) : o.totalPaise), 0);
   const todayUpi   = todayValid.filter((o) => o.paymentMethod === "upi" || (o.paymentMethod === "split" && o.splitPayment))
     .reduce((s, o) => s + (o.paymentMethod === "split" ? (o.splitPayment?.upiPaise ?? 0) : o.totalPaise), 0);
+  const todayCreditCard = todayValid.filter((o) => o.paymentMethod === "credit_card")
+    .reduce((s, o) => s + o.totalPaise, 0);
+  const todayDebitCard = todayValid.filter((o) => o.paymentMethod === "debit_card")
+    .reduce((s, o) => s + o.totalPaise, 0);
+  const todayCard = todayValid.filter((o) => o.paymentMethod === "card")
+    .reduce((s, o) => s + o.totalPaise, 0);
   const todayGst   = todayValid.reduce((s, o) => s + (o.gstPaise ?? 0), 0);
   const todayVoids = todayOrders.filter((o) => o.status === "voided").length;
+
+  const todayNotesCount = useMemo(() => {
+    const counts: Record<number, number> = {};
+    todayValid.forEach((o) => {
+      if (o.denominations) {
+        Object.entries(o.denominations).forEach(([denomStr, cnt]) => {
+          const d = Number(denomStr);
+          counts[d] = (counts[d] ?? 0) + cnt;
+        });
+      }
+    });
+    return counts;
+  }, [todayValid]);
 
   const byMethod = allValid.reduce<Record<string, number>>((acc, o) => {
     acc[o.paymentMethod] = (acc[o.paymentMethod] ?? 0) + o.totalPaise;
@@ -719,6 +738,13 @@ export default function DashboardPage() {
               </div>
               <button
                 onClick={() => {
+                  const noteLines = Object.entries(todayNotesCount)
+                    .map(([valStr, cnt]) => {
+                      const v = Number(valStr);
+                      return cnt > 0 ? `  ₹${v} x ${cnt} = ₹${(v * cnt).toFixed(2)}` : null;
+                    })
+                    .filter(Boolean);
+
                   const lines = [
                     `${bizName}`,
                     `End of Day — ${todayFmt}`,
@@ -728,13 +754,19 @@ export default function DashboardPage() {
                     ``,
                     `Cash         : ${(todayCash / 100).toFixed(2)}`,
                     `UPI          : ${(todayUpi / 100).toFixed(2)}`,
+                    todayCreditCard > 0 ? `Credit Card  : ${(todayCreditCard / 100).toFixed(2)}` : null,
+                    todayDebitCard > 0 ? `Debit Card   : ${(todayDebitCard / 100).toFixed(2)}` : null,
+                    todayCard > 0 ? `Card         : ${(todayCard / 100).toFixed(2)}` : null,
                     `GST collected: ${(todayGst / 100).toFixed(2)}`,
                     `─────────────────────────`,
                     `TOTAL        : ${(todaySales / 100).toFixed(2)}`,
+                    noteLines.length > 0 ? `` : null,
+                    noteLines.length > 0 ? `Notes & Coins Collection:` : null,
+                    ...noteLines,
                     ``,
                     `Printed ${new Date().toLocaleTimeString("en-IN")}`,
                   ].filter((l): l is string => l !== null);
-                  const w = window.open("", "_blank", "width=320,height=500");
+                  const w = window.open("", "_blank", "width=340,height=600");
                   if (!w) return;
                   w.document.write(
                     `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>End of Day</title>` +
@@ -757,24 +789,102 @@ export default function DashboardPage() {
               </button>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 10, marginBottom: 16 }}>
               {[
                 { label: "Orders", value: String(todayValid.length), sub: todayVoids > 0 ? `${todayVoids} voided` : "all completed" },
                 { label: "Total Revenue", value: fmtRupee(todaySales), sub: "excl. voided" },
                 { label: "Cash collected", value: fmtRupee(todayCash), sub: "" },
                 { label: "UPI collected", value: fmtRupee(todayUpi), sub: "" },
+                ...(todayCreditCard > 0 || todayDebitCard > 0
+                  ? [
+                      { label: "Credit Card", value: fmtRupee(todayCreditCard), sub: "" },
+                      { label: "Debit Card", value: fmtRupee(todayDebitCard), sub: "" },
+                    ]
+                  : [{ label: "Credit Card", value: fmtRupee(todayCreditCard), sub: "" }, { label: "Debit Card", value: fmtRupee(todayDebitCard), sub: "" }]),
                 { label: "GST collected", value: fmtRupee(todayGst), sub: "to remit" },
                 { label: "Net (excl. GST)", value: fmtRupee(Math.max(0, todaySales - todayGst)), sub: "" },
               ].map((row, i) => (
                 <div key={i} style={{
-                  background: i === 1 ? fire50 : sand,
+                  background: row.label === "Total Revenue" ? fire50 : sand,
                   borderRadius: 10, padding: "10px 12px",
                 }}>
-                  <p style={{ fontSize: 10, color: i === 1 ? fire : ash, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase" }}>{row.label}</p>
-                  <p style={{ fontFamily: "'Syne', sans-serif", fontSize: 16, fontWeight: 700, color: i === 1 ? fire : coal, marginTop: 2 }}>{row.value}</p>
+                  <p style={{ fontSize: 10, color: row.label === "Total Revenue" ? fire : ash, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase" }}>{row.label}</p>
+                  <p style={{ fontFamily: "'Syne', sans-serif", fontSize: 15, fontWeight: 700, color: row.label === "Total Revenue" ? fire : coal, marginTop: 2 }}>{row.value}</p>
                   {row.sub && <p style={{ fontSize: 10, color: ash, marginTop: 1 }}>{row.sub}</p>}
                 </div>
               ))}
+            </div>
+
+            {/* ── Notes & Coins Cash Drawer Collection Tracking ── */}
+            <div style={{ marginTop: 16, paddingTop: 16, borderTop: `1px solid ${ember}` }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <div style={{ width: 30, height: 30, borderRadius: 8, background: fire50, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <Banknote size={16} color={fireDark} />
+                  </div>
+                  <div>
+                    <p style={{ fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 700, color: coal }}>
+                      Notes &amp; Coins Collection (Accounting Drawer)
+                    </p>
+                    <p style={{ fontSize: 10, color: ash }}>Physical currency counts collected today</p>
+                  </div>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <p style={{ fontSize: 9, color: ash, fontWeight: 600, letterSpacing: "0.08em" }}>DRAWER TOTAL</p>
+                  <p style={{ fontFamily: "'Syne', sans-serif", fontSize: 14, fontWeight: 800, color: veg }}>
+                    {fmtRupee(
+                      Object.entries(todayNotesCount).reduce(
+                        (sum, [v, cnt]) => sum + Number(v) * cnt * 100,
+                        0
+                      )
+                    )}
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
+                {[500, 200, 100, 50, 20, 10, 5, 2, 1].map((denom) => {
+                  const count = todayNotesCount[denom] ?? 0;
+                  const isNote = denom >= 10 && denom !== 5 && denom !== 2 && denom !== 1;
+                  const totalForDenomPaise = denom * count * 100;
+                  return (
+                    <div
+                      key={`drawer-${denom}`}
+                      style={{
+                        background: count > 0 ? "white" : sand,
+                        border: `1px solid ${count > 0 ? "#FACDB0" : ember}`,
+                        borderRadius: 10,
+                        padding: "8px 10px",
+                        display: "flex",
+                        flexDirection: "column",
+                        justifyContent: "space-between",
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                        <span style={{ fontSize: 11, fontWeight: 800, color: count > 0 ? fireDark : ash }}>
+                          ₹{denom} {isNote ? "Note" : "Coin"}
+                        </span>
+                      </div>
+                      <div style={{ marginTop: 4, display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
+                        <span style={{ fontFamily: "'Syne', sans-serif", fontSize: 15, fontWeight: 800, color: count > 0 ? coal : ash }}>
+                          {count} <span style={{ fontSize: 10, fontWeight: 500, color: ash }}>pcs</span>
+                        </span>
+                        {count > 0 && (
+                          <span style={{ fontSize: 10, fontWeight: 700, color: veg }}>
+                            {fmtRupee(totalForDenomPaise)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {Object.keys(todayNotesCount).length === 0 && (
+                <p style={{ fontSize: 11, color: ash, textAlign: "center", padding: "10px 0" }}>
+                  No cash denomination data collected today
+                </p>
+              )}
             </div>
 
             {todayValid.length === 0 && (

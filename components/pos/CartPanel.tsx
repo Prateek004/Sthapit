@@ -14,6 +14,7 @@ import {
   BookmarkCheck,
 } from "lucide-react";
 import CheckoutModal from "./CheckoutModal";
+import QtyStepper from "@/components/ui/QtyStepper";
 import type { ServiceMode } from "@/lib/types";
 import { useTableStore, useAllTableOrders } from "@/lib/store/tableStore";
 
@@ -367,27 +368,14 @@ export default function CartPanel({ onClose }: Props) {
                     </button>
                   </div>
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center bg-white border border-gray-200 rounded-xl overflow-hidden">
-                      <button
-                        onClick={() =>
-                          updateCartQty(item.cartId, item.qty - 1)
-                        }
-                        className="w-8 h-8 flex items-center justify-center hover:bg-gray-50 press"
-                      >
-                        <Minus size={13} />
-                      </button>
-                      <span className="w-7 text-center text-sm font-black">
-                        {item.qty}
-                      </span>
-                      <button
-                        onClick={() =>
-                          updateCartQty(item.cartId, item.qty + 1)
-                        }
-                        className="w-8 h-8 flex items-center justify-center bg-primary-500 press"
-                      >
-                        <Plus size={13} className="text-white" />
-                      </button>
-                    </div>
+                    <QtyStepper
+                      value={item.qty}
+                      onChange={(newQty) => updateCartQty(item.cartId, newQty)}
+                      minusBg="white"
+                      plusBg="#E8590C"
+                      minusColor="#374151"
+                      plusColor="white"
+                    />
                     <span className="text-sm font-black text-gray-900">
                       {fmtRupee(lineTotal)}
                     </span>

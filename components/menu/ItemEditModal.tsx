@@ -17,13 +17,14 @@ export default function ItemEditModal({
   onClose: () => void;
   onSave: (i: MenuItem) => void;
 }) {
+  const isNew = !item?.id;
   const [name, setName] = useState(item?.name ?? "");
   const [catId, setCatId] = useState(item?.categoryId ?? categories[0]?.id ?? "");
   const [priceRupee, setPriceRupee] = useState(item?.pricePaise ? String(item.pricePaise / 100) : "");
   const [costRupee, setCostRupee] = useState(item?.costPricePaise ? String(item.costPricePaise / 100) : "");
   const [isVeg, setIsVeg] = useState(item?.isVeg ?? true);
   const [isAvailable, setIsAvailable] = useState(item?.isAvailable ?? true);
-  const [portionEnabled, setPortionEnabled] = useState(item?.portionEnabled ?? false);
+  const [portionEnabled, setPortionEnabled] = useState(item?.portionEnabled ?? (isNew ? true : false));
   const [portions, setPortions] = useState<{ label: string; pricePaise: number }[]>(
     item?.portions && item.portions.length > 0
       ? item.portions
@@ -59,7 +60,6 @@ export default function ItemEditModal({
     setAoPrice("");
   };
 
-  const isNew = !item?.id;
 
   const handleSave = () => {
     if (!name.trim() || !catId) return;

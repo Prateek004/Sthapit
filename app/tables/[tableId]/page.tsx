@@ -11,6 +11,9 @@ import { useRouter, useParams } from "next/navigation";
 import { useApp } from "@/lib/store/AppContext";
 import { useTableStore, useTableOrder } from "@/lib/store/tableStore";
 import AppShell from "@/components/ui/AppShell";
+import Modal from "@/components/ui/Modal";
+import DietFilter, { DietFilterValue } from "@/components/ui/DietFilter";
+import QtyStepper from "@/components/ui/QtyStepper";
 import type { MenuItem, AddOn, Order, PaymentMethod } from "@/lib/types";
 import type { StockShortfall } from "@/lib/utils/stockEngine";
 import { LOW_STOCK_BADGE_THRESHOLD } from "@/lib/utils/stockEngine";
@@ -21,8 +24,9 @@ import {
   calcGST,
   generateBillNumber,
   toP,
-  QUICK_CASH,
   fmtDate,
+  calcExactDenominations,
+  getItemPortions,
 } from "@/lib/utils";
 import {
   ArrowLeft,
@@ -40,10 +44,12 @@ import {
   QrCode,
   Banknote,
   Smartphone,
+  CreditCard,
   ClipboardList,
   AlertTriangle,
 } from "lucide-react";
 import { printKot } from "@/components/pos/CartPanel";
+import IndianCurrencySelector from "@/components/pos/IndianCurrencySelector";
 
 // ── Table name helper ─────────────────────────────────────────────────────────
 
@@ -64,6 +70,7 @@ interface MenuPanelProps {
 
 function MenuPanel({ categories, items, onItemPress }: MenuPanelProps) {
   const [activeCat, setActiveCat] = useState<string>("all");
+  const [dietFilter, setDietFilter] = useState<DietFilterValue>("all");
   const [search, setSearch] = useState("");
 
   const filtered = useMemo(
@@ -71,45 +78,52 @@ function MenuPanel({ categories, items, onItemPress }: MenuPanelProps) {
       items.filter((item) => {
         if (!item.isAvailable) return false;
         const catOk = activeCat === "all" || item.categoryId === activeCat;
+        const dietOk =
+          dietFilter === "all" ||
+          (dietFilter === "veg" && item.isVeg) ||
+          (dietFilter === "non-veg" && !item.isVeg);
         const searchOk =
           !search || item.name.toLowerCase().includes(search.toLowerCase());
-        return catOk && searchOk;
+        return catOk && dietOk && searchOk;
       }),
-    [items, activeCat, search]
+    [items, activeCat, dietFilter, search]
   );
 
   return (
     <div className="flex flex-col h-full overflow-hidden" style={{ background: "#F5F0EB" }}>
-      {/* Search */}
+      {/* Search & Diet Filter */}
       <div className="px-3 pt-3 pb-2 shrink-0" style={{ background: "white" }}>
-        <div className="relative">
-          <Search
-            size={15}
-            className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
-            style={{ color: "#A89684" }}
-          />
-          <input
-            className="w-full h-10 pl-9 pr-9 rounded-xl text-sm font-medium outline-none transition-all"
-            style={{
-              background: "#F5F0EB",
-              border: "1.5px solid transparent",
-              color: "#1A1208",
-            }}
-            placeholder="Search menu…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            onFocus={(e) => (e.target.style.borderColor = "#E8590C")}
-            onBlur={(e) => (e.target.style.borderColor = "transparent")}
-          />
-          {search && (
-            <button
-              onClick={() => setSearch("")}
-              className="absolute right-3 top-1/2 -translate-y-1/2 press"
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 mb-2">
+          <div className="relative flex-1">
+            <Search
+              size={15}
+              className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
               style={{ color: "#A89684" }}
-            >
-              <X size={14} />
-            </button>
-          )}
+            />
+            <input
+              className="w-full h-10 pl-9 pr-9 rounded-xl text-sm font-medium outline-none transition-all"
+              style={{
+                background: "#F5F0EB",
+                border: "1.5px solid transparent",
+                color: "#1A1208",
+              }}
+              placeholder="Search menu…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onFocus={(e) => (e.target.style.borderColor = "#E8590C")}
+              onBlur={(e) => (e.target.style.borderColor = "transparent")}
+            />
+            {search && (
+              <button
+                onClick={() => setSearch("")}
+                className="absolute right-3 top-1/2 -translate-y-1/2 press"
+                style={{ color: "#A89684" }}
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+          <DietFilter value={dietFilter} onChange={setDietFilter} />
         </div>
 
         {/* Category pills */}
@@ -255,48 +269,39 @@ interface ItemConfigProps {
 }
 
 function ItemConfigSheet({ item, onClose, onConfirm }: ItemConfigProps) {
+  const { state } = useApp();
+  const categories = state.categories;
+
   const [selectedAddOns, setSelectedAddOns] = useState<AddOn[]>([]);
   const [selectedSize, setSelectedSize] = useState<string | undefined>();
   const [selectedPortion, setSelectedPortion] = useState<string | undefined>();
   const [notes, setNotes] = useState("");
 
+  const portions = item ? getItemPortions(item, categories) : [];
+
   useEffect(() => {
     if (item) {
       setSelectedAddOns([]);
       setSelectedSize(item.sizes?.[0]?.label);
-      setSelectedPortion(item.portions?.[0]?.label);
+      const pList = getItemPortions(item, categories);
+      const defaultP = pList.find((x) => x.label === "Full" || x.label === "Large")?.label ?? pList[0]?.label;
+      setSelectedPortion(defaultP);
       setNotes("");
     }
   }, [item?.id]);
 
   if (!item) return null;
 
-  const hasOptions =
-    (item.sizes && item.sizes.length > 0) ||
-    (item.portions && item.portions.length > 0) ||
-    item.addOns.length > 0;
-
-  const handleFastAdd = () => {
-    onConfirm(item, [], undefined, undefined, undefined);
-    onClose();
-  };
-
   const handleConfirm = () => {
     onConfirm(item, selectedAddOns, selectedSize, selectedPortion, notes || undefined);
     onClose();
   };
 
-  if (!hasOptions) {
-    // Fast-add: no config needed
-    handleFastAdd();
-    return null;
-  }
-
   const effectivePrice = selectedSize
     ? (item.sizes?.find((s) => s.label === selectedSize)?.pricePaise ?? item.pricePaise)
     : selectedPortion
-    ? (item.portions?.find((p) => p.label === selectedPortion)?.pricePaise ?? item.pricePaise)
-    : item.pricePaise;
+      ? (portions.find((p) => p.label === selectedPortion)?.pricePaise ?? item.pricePaise)
+      : item.pricePaise;
 
   const addOnTotal = selectedAddOns.reduce((s, a) => s + a.pricePaise, 0);
   const lineTotal = effectivePrice + addOnTotal;
@@ -336,6 +341,7 @@ function ItemConfigSheet({ item, onClose, onConfirm }: ItemConfigProps) {
                   {item.sizes.map((s) => (
                     <button
                       key={s.label}
+                      type="button"
                       onClick={() => setSelectedSize(s.label)}
                       className="px-3 py-1.5 rounded-xl text-sm font-bold border-2 press transition-all"
                       style={{
@@ -352,17 +358,18 @@ function ItemConfigSheet({ item, onClose, onConfirm }: ItemConfigProps) {
             )}
 
             {/* Portions */}
-            {item.portions && item.portions.length > 0 && (
+            {portions.length > 0 && (
               <div>
                 <p className="text-xs font-bold uppercase tracking-wider mb-2" style={{ color: "#7A6456" }}>
                   Portion
                 </p>
                 <div className="flex flex-wrap gap-2">
-                  {item.portions.map((p) => (
+                  {portions.map((p) => (
                     <button
                       key={p.label}
+                      type="button"
                       onClick={() => setSelectedPortion(p.label)}
-                      className="px-3 py-1.5 rounded-xl text-sm font-bold border-2 press transition-all"
+                      className="px-3.5 py-2 rounded-xl text-sm font-bold border-2 press transition-all"
                       style={{
                         borderColor: selectedPortion === p.label ? "#E8590C" : "#F0E8DF",
                         background: selectedPortion === p.label ? "#FEF0E8" : "white",
@@ -486,10 +493,12 @@ function TableCartPanel({
 
   const kotEnabled = guardState.session?.stockSettings?.kotEnabled ?? false;
 
+  const [showKotConfirmModal, setShowKotConfirmModal] = useState(false);
+
   // Order/KOT: prints a KOT for the table's REAL, persisted items (order.items)
   // — never a local snapshot — then marks it fired so the button reflects
   // whether the current item set has already reached the kitchen.
-  const handlePrintKot = useCallback(async () => {
+  const executePrintKot = useCallback(async () => {
     if (!order || order.items.length === 0) return;
     setFiringKot(true);
     try {
@@ -505,8 +514,18 @@ function TableCartPanel({
       guardToast(`KOT printed for Table ${tableNumber} ✓`);
     } finally {
       setFiringKot(false);
+      setShowKotConfirmModal(false);
     }
   }, [order, tableId, tableNumber, markKotFired, guardState.session?.businessName, guardToast]);
+
+  const handlePrintKotClick = useCallback(() => {
+    const printCount = order?.kotPrintCount ?? 0;
+    if (printCount >= 2) {
+      setShowKotConfirmModal(true);
+    } else {
+      executePrintKot();
+    }
+  }, [order?.kotPrintCount, executePrintKot]);
 
   const items = order?.items ?? [];
   const itemCount = items.reduce((s, i) => s + i.qty, 0);
@@ -574,6 +593,7 @@ function TableCartPanel({
         {items.map((item) => {
           const ao = item.selectedAddOns.reduce((s, a) => s + a.pricePaise, 0);
           const lineTotal = (item.unitPricePaise + ao) * item.qty;
+          const isPlaced = item.status === "placed";
           return (
             <div
               key={item.cartId}
@@ -582,8 +602,13 @@ function TableCartPanel({
             >
               <div className="flex items-start gap-2 mb-2">
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-bold truncate" style={{ color: "#1A1208" }}>
-                    {item.name}
+                  <p className="text-sm font-bold truncate flex items-center gap-1.5" style={{ color: "#1A1208" }}>
+                    <span>{item.name}</span>
+                    {isPlaced && (
+                      <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded-md bg-emerald-100 text-emerald-800 shrink-0">
+                        Placed ✓
+                      </span>
+                    )}
                   </p>
                   {item.selectedSize && (
                     <p className="text-xs" style={{ color: "#7A6456" }}>
@@ -606,40 +631,26 @@ function TableCartPanel({
                     </p>
                   )}
                 </div>
-                <button
-                  onClick={() => removeItem(tableId, item.cartId)}
-                  className="press shrink-0"
-                  style={{ color: "#E5DBCC" }}
-                >
-                  <Trash2 size={14} />
-                </button>
+                {!isPlaced && (
+                  <button
+                    onClick={() => removeItem(tableId, item.cartId)}
+                    className="press shrink-0"
+                    style={{ color: "#E5DBCC" }}
+                    title="Delete Item"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                )}
               </div>
               <div className="flex items-center justify-between">
-                <div
-                  className="flex items-center rounded-xl overflow-hidden border"
-                  style={{ borderColor: "#F0E8DF" }}
-                >
-                  <button
-                    onClick={() => updateItemQty(tableId, item.cartId, item.qty - 1)}
-                    className="w-8 h-8 flex items-center justify-center press"
-                    style={{ background: "white" }}
-                  >
-                    <Minus size={12} style={{ color: "#7A6456" }} />
-                  </button>
-                  <span
-                    className="w-7 text-center text-sm font-black"
-                    style={{ color: "#1A1208" }}
-                  >
-                    {item.qty}
-                  </span>
-                  <button
-                    onClick={() => updateItemQty(tableId, item.cartId, item.qty + 1)}
-                    className="w-8 h-8 flex items-center justify-center press"
-                    style={{ background: "#E8590C" }}
-                  >
-                    <Plus size={12} style={{ color: "white" }} />
-                  </button>
-                </div>
+                <QtyStepper
+                  value={item.qty}
+                  onChange={(newQty) => updateItemQty(tableId, item.cartId, newQty)}
+                  minusBg="white"
+                  plusBg="#E8590C"
+                  minusColor="#7A6456"
+                  plusColor="white"
+                />
                 <span className="text-sm font-black" style={{ color: "#1A1208" }}>
                   {fmtRupee(lineTotal)}
                 </span>
@@ -738,7 +749,7 @@ function TableCartPanel({
         {/* Print KOT — decoupled from Hold; always reflects order.items */}
         {kotEnabled && (
           <button
-            onClick={handlePrintKot}
+            onClick={handlePrintKotClick}
             disabled={firingKot}
             className="w-full h-11 flex items-center justify-center gap-2 rounded-2xl border-2 font-bold text-sm press disabled:opacity-40"
             style={{
@@ -755,9 +766,40 @@ function TableCartPanel({
             {firingKot
               ? "Printing…"
               : order?.kotFiredAt
-              ? `KOT Printed${order.kotAutoPlaced ? " (auto)" : ""} ✓ — Reprint`
-              : "Print KOT"}
+                ? `KOT Printed${order.kotAutoPlaced ? " (auto)" : ""} ✓ — Reprint`
+                : "Print KOT"}
           </button>
+        )}
+
+        {/* Confirmation Modal for Reprint KOT (3rd+ click) */}
+        {showKotConfirmModal && (
+          <Modal open={showKotConfirmModal} onClose={() => setShowKotConfirmModal(false)} title="">
+            <div className="p-5 text-center space-y-3">
+              <div className="w-12 h-12 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center mx-auto">
+                <AlertTriangle size={24} />
+              </div>
+              <h3 className="font-extrabold text-gray-900 text-base">Should we proceed again?</h3>
+              <p className="text-xs text-gray-500">
+                KOT has already been printed {order?.kotPrintCount} times for Table {tableNumber}.
+              </p>
+              <div className="flex gap-2.5 pt-2">
+                <button
+                  onClick={() => setShowKotConfirmModal(false)}
+                  className="flex-1 py-2.5 rounded-xl border border-gray-200 font-bold text-sm text-gray-600 press"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={executePrintKot}
+                  disabled={firingKot}
+                  className="flex-1 py-2.5 rounded-xl bg-orange-500 text-white font-bold text-sm press shadow-sm disabled:opacity-50 flex items-center justify-center gap-1.5"
+                >
+                  {firingKot && <Loader2 size={15} className="animate-spin" />}
+                  <span>Yes</span>
+                </button>
+              </div>
+            </div>
+          </Modal>
         )}
 
         {/* Hold */}
@@ -805,9 +847,11 @@ function TableCartPanel({
 // ── Checkout flow ─────────────────────────────────────────────────────────────
 
 const PAY_METHODS: { id: PaymentMethod; label: string; Icon: React.ElementType }[] = [
-  { id: "cash",  label: "Cash",  Icon: Banknote   },
-  { id: "upi",   label: "UPI",   Icon: Smartphone },
-  { id: "split", label: "Split", Icon: Banknote   },
+  { id: "cash", label: "Cash", Icon: Banknote },
+  { id: "upi", label: "UPI", Icon: Smartphone },
+  { id: "credit_card", label: "Credit Card", Icon: CreditCard },
+  { id: "debit_card", label: "Debit Card", Icon: CreditCard },
+  { id: "split", label: "Split", Icon: Banknote },
 ];
 
 interface CheckoutSheetProps {
@@ -842,6 +886,7 @@ function CheckoutSheet({
 
   const [method, setMethod] = useState<PaymentMethod>("cash");
   const [cashInput, setCashInput] = useState("");
+  const [denominations, setDenominations] = useState<Record<number, number>>({});
   const [splitCash, setSplitCash] = useState("");
   const [splitUpi, setSplitUpi] = useState("");
   const [upiConfirmed, setUpiConfirmed] = useState(false);
@@ -856,6 +901,21 @@ function CheckoutSheet({
   // Owners get a warning and proceed on the second tap; cashiers are blocked.
   const [stockWarnings, setStockWarnings] = useState<StockShortfall[] | null>(null);
   const stockAcknowledgedRef = useRef(false);
+  useEffect(() => {
+    setMethod("cash");
+    setCashInput("");
+    setDenominations({});
+    setSplitCash("");
+    setSplitUpi("");
+    setUpiConfirmed(false);
+    setPlacing(false);
+    placingRef.current = false;
+    setPlacedOrder(null);
+    setQrSrc("");
+    setShowUpiQr(false);
+    setStockWarnings(null);
+    stockAcknowledgedRef.current = false;
+  }, [order?.id]);
 
   const hasUpi = Boolean(upiId);
   const items = order?.items ?? [];
@@ -874,6 +934,9 @@ function CheckoutSheet({
   const canConfirm =
     !placing &&
     ((method === "upi" && upiConfirmed) ||
+      method === "credit_card" ||
+      method === "debit_card" ||
+      method === "card" ||
       (method === "cash" && cashInput !== "" && cashPaise >= totalPaise) ||
       (method === "split" && splitOk));
 
@@ -987,7 +1050,7 @@ function CheckoutSheet({
         const { getNextBillCounterFromSupabase } = await import("@/lib/supabase/sync");
         const remote = await getNextBillCounterFromSupabase(businessId);
         if (remote !== null) billNumber = `#${String(remote).padStart(4, "0")}`;
-      } catch {}
+      } catch { }
 
       const finalOrder: Order = {
         id: crypto.randomUUID(),
@@ -1022,6 +1085,10 @@ function CheckoutSheet({
             : undefined,
         cashReceivedPaise: method === "cash" ? cashPaise : undefined,
         changePaise: method === "cash" ? changePaise : 0,
+        denominations:
+          method === "cash" || (method === "split" && splitCashP > 0)
+            ? denominations
+            : undefined,
         createdAt: new Date().toISOString(),
         syncStatus: "pending",
         status: "completed",
@@ -1046,17 +1113,19 @@ function CheckoutSheet({
             }))
           )
         )
-        .catch(() => {});
+        .catch(() => { });
 
       notifyOrderPlaced(finalOrder);
       await clearOrder(tableId);
 
       import("@/lib/supabase/sync")
         .then(({ syncOrder }) => syncOrder(finalOrder, businessId))
-        .catch(() => {});
+        .catch(() => { });
 
       setPlacedOrder(finalOrder);
     } catch {
+      showToast("Payment processing failed. Try again.", "error");
+    } finally {
       placingRef.current = false;
       setPlacing(false);
     }
@@ -1141,15 +1210,38 @@ function CheckoutSheet({
               {placedOrder.items.map((item, idx) => {
                 const ao = item.selectedAddOns.reduce((s, a) => s + a.pricePaise, 0);
                 const line = (item.unitPricePaise + ao) * item.qty;
+                const portionStr = item.selectedPortion
+                  ? ` (${item.selectedPortion})`
+                  : item.selectedSize
+                  ? ` (${item.selectedSize})`
+                  : "";
                 return (
-                  <div key={idx} className="mb-1">
-                    <div className="flex justify-between">
-                      <span className="flex-1 truncate pr-2">{item.name}</span>
+                  <div key={idx} className="mb-2">
+                    <div className="flex justify-between font-semibold">
+                      <span className="flex-1 pr-2">
+                        {item.name}
+                        {portionStr}
+                      </span>
                       <span>{fmtRupee(line)}</span>
                     </div>
-                    <div className="pl-2" style={{ color: "#A89684" }}>
-                      {item.qty} × {fmtRupee(item.unitPricePaise + ao)}
+                    <div className="pl-2 text-[11px]" style={{ color: "#7A6456" }}>
+                      {item.qty} × {fmtRupee(item.unitPricePaise)}
                     </div>
+                    {item.selectedAddOns.length > 0 && (
+                      <div className="pl-2 text-[11px] space-y-0.5 mt-0.5" style={{ color: "#7A6456" }}>
+                        {item.selectedAddOns.map((a, ai) => (
+                          <div key={ai} className="flex justify-between">
+                            <span>+ {a.name}</span>
+                            <span>+{fmtRupee(a.pricePaise * item.qty)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {item.notes && (
+                      <div className="pl-2 text-[10px] italic mt-0.5" style={{ color: "#E8590C" }}>
+                        → {item.notes}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -1278,7 +1370,7 @@ function CheckoutSheet({
             {/* Payment method */}
             <div>
               <p className="text-sm font-bold mb-2" style={{ color: "#1A1208" }}>Payment Method</p>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
                 {PAY_METHODS.map(({ id, label, Icon }) => (
                   <button
                     key={id}
@@ -1287,15 +1379,15 @@ function CheckoutSheet({
                       setShowUpiQr(false);
                       setUpiConfirmed(false);
                     }}
-                    className="py-3 rounded-2xl border-2 flex flex-col items-center gap-1.5 transition-all press"
+                    className="py-2.5 px-1 rounded-2xl border-2 flex flex-col items-center justify-center gap-1 transition-all press"
                     style={{
                       borderColor: method === id ? "#E8590C" : "#F0E8DF",
                       background: method === id ? "#FEF0E8" : "white",
                       color: method === id ? "#E8590C" : "#7A6456",
                     }}
                   >
-                    <Icon size={20} />
-                    <span className="text-xs font-bold">{label}</span>
+                    <Icon size={18} />
+                    <span className="text-[11px] font-extrabold text-center leading-tight">{label}</span>
                   </button>
                 ))}
               </div>
@@ -1314,37 +1406,41 @@ function CheckoutSheet({
                       cashInput !== "" && cashPaise < totalPaise
                         ? "#C0392B"
                         : cashInput !== "" && cashPaise >= totalPaise
-                        ? "#2D6A4F"
-                        : "#F0E8DF",
+                          ? "#2D6A4F"
+                          : "#F0E8DF",
                     color: "#1A1208",
                   }}
                   placeholder="Cash received (₹)"
                   value={cashInput}
                   onChange={(e) => setCashInput(e.target.value)}
                 />
-                <div className="flex gap-2 flex-wrap">
-                  {QUICK_CASH.map((amt) => (
-                    <button
-                      key={amt}
-                      onClick={() => setCashInput(String(amt))}
-                      className="px-3 py-1.5 rounded-xl border font-bold text-sm press"
-                      style={{
-                        borderColor: Number(cashInput) === amt ? "#E8590C" : "#F0E8DF",
-                        background: Number(cashInput) === amt ? "#FEF0E8" : "white",
-                        color: Number(cashInput) === amt ? "#E8590C" : "#7A6456",
-                      }}
-                    >
-                      ₹{amt}
-                    </button>
-                  ))}
-                  <button
-                    onClick={() => setCashInput(String(totalPaise / 100))}
-                    className="px-3 py-1.5 rounded-xl border font-bold text-sm press"
-                    style={{ borderColor: "#FACDB0", background: "#FEF0E8", color: "#E8590C" }}
-                  >
-                    Exact
-                  </button>
-                </div>
+                {/* Indian Notes & Coins Counter Selector */}
+                <IndianCurrencySelector
+                  onChange={(counts, totalRupees) => {
+                    setDenominations(counts);
+                    setCashInput(totalRupees > 0 ? String(totalRupees) : "");
+                  }}
+                  initialCounts={denominations}
+                />
+
+                {/* Exact Amount Button */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const exactRupees = totalPaise / 100;
+                    setCashInput(String(exactRupees));
+                    setDenominations(calcExactDenominations(exactRupees));
+                  }}
+                  className="w-full py-2.5 px-4 rounded-xl border font-black text-sm flex items-center justify-center gap-2 transition-all press shadow-2xs"
+                  style={{
+                    borderColor: "#FACDB0",
+                    background: "#FEF0E8",
+                    color: "#E8590C",
+                  }}
+                >
+                  <span>Exact Cash ({fmtRupee(totalPaise)})</span>
+                </button>
+
                 {cashInput !== "" && (
                   <div
                     className="rounded-xl py-3 text-center font-bold text-sm"
@@ -1358,6 +1454,24 @@ function CheckoutSheet({
                       : `Short by ${fmtRupee(totalPaise - cashPaise)}`}
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* Card (Credit / Debit) */}
+            {(method === "credit_card" || method === "debit_card" || method === "card") && (
+              <div className="rounded-2xl p-4 text-center space-y-1.5 border" style={{ background: "#F5F0FA", borderColor: "#E5DBCC" }}>
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center mx-auto mb-2" style={{ background: "#E8590C", color: "white" }}>
+                  <CreditCard size={22} />
+                </div>
+                <p className="font-bold" style={{ color: "#1A1208" }}>
+                  Collect via {method === "credit_card" ? "Credit Card" : method === "debit_card" ? "Debit Card" : "Card"}
+                </p>
+                <p className="text-2xl font-black" style={{ color: "#E8590C" }}>
+                  {fmtRupee(totalPaise)}
+                </p>
+                <p className="text-xs font-medium" style={{ color: "#7A6456" }}>
+                  Swipe or tap card on POS terminal and tap Collect &amp; Settle Bill below
+                </p>
               </div>
             )}
 
@@ -1456,8 +1570,8 @@ function CheckoutSheet({
                   {splitOk
                     ? `Covered ✓ (${fmtRupee(splitTotal)})`
                     : splitTotal > 0
-                    ? `Short by ${fmtRupee(totalPaise - splitTotal)}`
-                    : `Need ${fmtRupee(totalPaise)}`}
+                      ? `Short by ${fmtRupee(totalPaise - splitTotal)}`
+                      : `Need ${fmtRupee(totalPaise)}`}
                 </div>
               </div>
             )}
@@ -1502,8 +1616,8 @@ function CheckoutSheet({
             {placing
               ? "Processing…"
               : stockWarnings && stockWarnings.length > 0
-              ? `Collect Anyway · ${fmtRupee(totalPaise)}`
-              : `Collect & Close · ${fmtRupee(totalPaise)}`}
+                ? `Collect Anyway · ${fmtRupee(totalPaise)}`
+                : `Collect & Close · ${fmtRupee(totalPaise)}`}
           </button>
         </div>
       </div>
@@ -1536,11 +1650,15 @@ export default function TableOrderPage() {
     if (!isLoading && !session) router.replace("/auth");
   }, [isLoading, session, router]);
 
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [tableId]);
+
   const handleItemPress = useCallback((item: MenuItem) => {
-    // Fast-add items with no options
+    const portions = getItemPortions(item, categories);
     const hasOptions =
       (item.sizes && item.sizes.length > 0) ||
-      (item.portions && item.portions.length > 0) ||
+      portions.length > 0 ||
       item.addOns.length > 0;
 
     if (!hasOptions) {
@@ -1548,7 +1666,7 @@ export default function TableOrderPage() {
     } else {
       setConfigItem(item);
     }
-  }, [tableId, tableName, tableNumber, addItem]);
+  }, [tableId, tableName, tableNumber, addItem, categories]);
 
   const handleConfigConfirm = useCallback(
     (item: MenuItem, addOns: AddOn[], size?: string, portion?: string, notes?: string) => {
@@ -1751,10 +1869,12 @@ function MobileTableView({
   const totalPaise = order?.totalPaise ?? 0;
   const kotEnabled = guardState.session?.stockSettings?.kotEnabled ?? false;
 
+  const [showKotConfirmModal, setShowKotConfirmModal] = useState(false);
+
   // Order/KOT: same fix as the desktop TableCartPanel — prints from the
   // persisted order.items, never a local snapshot, and is fully independent
   // of Hold Order below.
-  const handlePrintKot = useCallback(async () => {
+  const executePrintKot = useCallback(async () => {
     if (!order || order.items.length === 0) return;
     setFiringKot(true);
     try {
@@ -1770,8 +1890,18 @@ function MobileTableView({
       guardToast(`KOT printed for Table ${tableNumber} ✓`);
     } finally {
       setFiringKot(false);
+      setShowKotConfirmModal(false);
     }
   }, [order, tableId, tableNumber, markKotFired, guardState.session?.businessName, guardToast]);
+
+  const handlePrintKotClick = useCallback(() => {
+    const printCount = order?.kotPrintCount ?? 0;
+    if (printCount >= 2) {
+      setShowKotConfirmModal(true);
+    } else {
+      executePrintKot();
+    }
+  }, [order?.kotPrintCount, executePrintKot]);
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
@@ -1832,6 +1962,7 @@ function MobileTableView({
               {items.map((item) => {
                 const ao = item.selectedAddOns.reduce((s, a) => s + a.pricePaise, 0);
                 const lineTotal = (item.unitPricePaise + ao) * item.qty;
+                const isPlaced = item.status === "placed";
                 return (
                   <div
                     key={item.cartId}
@@ -1839,8 +1970,13 @@ function MobileTableView({
                     style={{ background: "#FEF9F4", border: "1px solid #F0E8DF" }}
                   >
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-bold truncate" style={{ color: "#1A1208" }}>
-                        {item.name}
+                      <p className="text-sm font-bold truncate flex items-center gap-1.5" style={{ color: "#1A1208" }}>
+                        <span>{item.name}</span>
+                        {isPlaced && (
+                          <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded-md bg-emerald-100 text-emerald-800 shrink-0">
+                            Placed ✓
+                          </span>
+                        )}
                       </p>
                       {item.notes && (
                         <p className="text-xs italic" style={{ color: "#E8590C" }}>
@@ -1873,13 +2009,16 @@ function MobileTableView({
                     <span className="text-sm font-black shrink-0 ml-1" style={{ color: "#1A1208" }}>
                       {fmtRupee(lineTotal)}
                     </span>
-                    <button
-                      onClick={() => removeItem(tableId, item.cartId)}
-                      className="press shrink-0"
-                      style={{ color: "#E5DBCC" }}
-                    >
-                      <Trash2 size={14} />
-                    </button>
+                    {!isPlaced && (
+                      <button
+                        onClick={() => removeItem(tableId, item.cartId)}
+                        className="press shrink-0"
+                        style={{ color: "#E5DBCC" }}
+                        title="Delete Item"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    )}
                   </div>
                 );
               })}
@@ -1895,7 +2034,7 @@ function MobileTableView({
               </div>
               {kotEnabled && (
                 <button
-                  onClick={handlePrintKot}
+                  onClick={handlePrintKotClick}
                   disabled={firingKot}
                   className="w-full h-11 flex items-center justify-center gap-2 rounded-2xl border-2 font-bold text-sm press disabled:opacity-40"
                   style={{
@@ -1908,10 +2047,42 @@ function MobileTableView({
                   {firingKot
                     ? "Printing…"
                     : order?.kotFiredAt
-                    ? `KOT Printed${order.kotAutoPlaced ? " (auto)" : ""} ✓ — Reprint`
-                    : "Print KOT"}
+                      ? `KOT Printed${order.kotAutoPlaced ? " (auto)" : ""} ✓ — Reprint`
+                      : "Print KOT"}
                 </button>
               )}
+
+              {/* Confirmation Modal for Reprint KOT (3rd+ click) */}
+              {showKotConfirmModal && (
+                <Modal open={showKotConfirmModal} onClose={() => setShowKotConfirmModal(false)} title="">
+                  <div className="p-5 text-center space-y-3">
+                    <div className="w-12 h-12 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center mx-auto">
+                      <AlertTriangle size={24} />
+                    </div>
+                    <h3 className="font-extrabold text-gray-900 text-base">Should we proceed again?</h3>
+                    <p className="text-xs text-gray-500">
+                      KOT has already been printed {order?.kotPrintCount} times for Table {tableNumber}.
+                    </p>
+                    <div className="flex gap-2.5 pt-2">
+                      <button
+                        onClick={() => setShowKotConfirmModal(false)}
+                        className="flex-1 py-2.5 rounded-xl border border-gray-200 font-bold text-sm text-gray-600 press"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={executePrintKot}
+                        disabled={firingKot}
+                        className="flex-1 py-2.5 rounded-xl bg-orange-500 text-white font-bold text-sm press shadow-sm disabled:opacity-50 flex items-center justify-center gap-1.5"
+                      >
+                        {firingKot && <Loader2 size={15} className="animate-spin" />}
+                        <span>Yes</span>
+                      </button>
+                    </div>
+                  </div>
+                </Modal>
+              )}
+
               <button
                 onClick={async () => { setShowCart(false); await onHold(); }}
                 disabled={holding}

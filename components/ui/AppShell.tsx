@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, useRef, type ReactNode } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useApp } from "@/lib/store/AppContext";
 import DesktopSidebar from "./DesktopSidebar";
@@ -153,6 +153,13 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const { state } = useApp();
   const router = useRouter();
   const pathname = usePathname();
+  const mainRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    if (mainRef.current) {
+      mainRef.current.scrollTop = 0;
+    }
+  }, [pathname]);
 
   useEffect(() => {
     if (state.isLoading) return;
@@ -187,7 +194,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
         {/* Right column: content + bottom nav */}
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-          <main className="flex-1 overflow-y-auto">
+          <main ref={mainRef} className="flex-1 overflow-y-auto">
             <div className="pb-16 lg:pb-0">{children}</div>
           </main>
           <div className="lg:hidden shrink-0">

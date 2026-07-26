@@ -9,6 +9,7 @@ import ItemConfigModal from "@/components/pos/ItemConfigModal";
 import CartPanel from "@/components/pos/CartPanel";
 import AppShell from "@/components/ui/AppShell";
 import Modal from "@/components/ui/Modal";
+import DietFilter, { DietFilterValue } from "@/components/ui/DietFilter";
 import { fmtRupee, calcGST, calcDiscount } from "@/lib/utils";
 import { Search, X } from "lucide-react";
 
@@ -20,18 +21,27 @@ export default function POSPage() {
   const activeCat = posActiveCat;
   const [configItem, setConfigItem] = useState<MenuItem | null>(null);
   const [search, setSearch] = useState("");
+  const [dietFilter, setDietFilter] = useState<DietFilterValue>("all");
   const [cartOpen, setCartOpen] = useState(false);
 
   useEffect(() => {
     if (!isLoading && !session) router.replace("/auth");
   }, [isLoading, session, router]);
 
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, []);
+
   const filteredItems = menuItems
     .filter((item) => {
       const catOk = activeCat === "all" || item.categoryId === activeCat;
+      const dietOk =
+        dietFilter === "all" ||
+        (dietFilter === "veg" && item.isVeg) ||
+        (dietFilter === "non-veg" && !item.isVeg);
       const searchOk =
         !search || item.name.toLowerCase().includes(search.toLowerCase());
-      return catOk && searchOk;
+      return catOk && dietOk && searchOk;
     })
     .sort((a, b) => Number(b.isAvailable) - Number(a.isAvailable));
 
@@ -77,18 +87,6 @@ export default function POSPage() {
       >
         {/* ── Menu panel ── */}
         <div className="flex flex-col overflow-hidden flex-1 min-w-0 relative">
-          <MenuPanel
-            bizName={session?.businessName}
-            categories={categories}
-            items={filteredItems}
-            activeCat={activeCat}
-            onCatChange={scrollCatIntoView}
-            search={search}
-            onSearch={setSearch}
-            onItemPress={setConfigItem}
-            mobileCompact
-          />
-
           {/* Mobile floating "View Cart" button */}
           {cartCount > 0 && (
             <button
@@ -106,6 +104,19 @@ export default function POSPage() {
               </span>
             </button>
           )}
+          <MenuPanel
+            bizName={session?.businessName}
+            categories={categories}
+            items={filteredItems}
+            activeCat={activeCat}
+            onCatChange={scrollCatIntoView}
+            dietFilter={dietFilter}
+            onDietFilterChange={setDietFilter}
+            search={search}
+            onSearch={setSearch}
+            onItemPress={setConfigItem}
+            mobileCompact
+          />
         </div>
 
         {/* ── Desktop cart panel ── */}
@@ -136,6 +147,8 @@ interface MenuPanelProps {
   items: MenuItem[];
   activeCat: string;
   onCatChange: (id: string) => void;
+  dietFilter: DietFilterValue;
+  onDietFilterChange: (diet: DietFilterValue) => void;
   search: string;
   onSearch: (s: string) => void;
   onItemPress: (item: MenuItem) => void;
@@ -148,6 +161,8 @@ function MenuPanel({
   items,
   activeCat,
   onCatChange,
+  dietFilter,
+  onDietFilterChange,
   search,
   onSearch,
   onItemPress,
@@ -173,26 +188,29 @@ function MenuPanel({
           </div>
         </div>
 
-        {/* Search */}
-        <div className="relative mb-3">
-          <Search
-            size={16}
-            className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
-          />
-          <input
-            className="w-full h-10 pl-9 pr-9 rounded-xl bg-gray-100 text-sm font-medium outline-none focus:bg-white focus:ring-2 focus:ring-primary-200 transition-all"
-            placeholder="Search items…"
-            value={search}
-            onChange={(e) => onSearch(e.target.value)}
-          />
-          {search && (
-            <button
-              onClick={() => onSearch("")}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 press"
-            >
-              <X size={14} />
-            </button>
-          )}
+        {/* Search & Diet Filter */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 mb-2.5">
+          <div className="relative flex-1">
+            <Search
+              size={16}
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
+            />
+            <input
+              className="w-full h-10 pl-9 pr-9 rounded-xl bg-gray-100 text-sm font-medium outline-none focus:bg-white focus:ring-2 focus:ring-primary-200 transition-all"
+              placeholder="Search items…"
+              value={search}
+              onChange={(e) => onSearch(e.target.value)}
+            />
+            {search && (
+              <button
+                onClick={() => onSearch("")}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 press"
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+          <DietFilter value={dietFilter} onChange={onDietFilterChange} />
         </div>
 
         {/* Category pills */}

@@ -1,7 +1,7 @@
 "use client";
 import { useApp } from "@/lib/store/AppContext";
 import type { MenuItem } from "@/lib/types";
-import { fmtRupee } from "@/lib/utils";
+import { fmtRupee, getItemPortions } from "@/lib/utils";
 import { useStockRemaining } from "@/lib/hooks/useStockBadges";
 import { LOW_STOCK_BADGE_THRESHOLD } from "@/lib/utils/stockEngine";
 import { Plus, Minus, CheckCircle2 } from "lucide-react";
@@ -30,10 +30,11 @@ export default function MenuItemCard({
   const cartEntries = state.cart.filter((c) => c.menuItemId === item.id);
   const cartQty = cartEntries.reduce((s, c) => s + c.qty, 0);
 
+  const portions = getItemPortions(item, state.categories);
   const hasOptions =
     (item.addOns && item.addOns.length > 0) ||
     (item.sizes && item.sizes.length > 0) ||
-    (item.portionEnabled && item.portions && item.portions.length > 0);
+    portions.length > 0;
 
   /**
    * Tap behaviour:

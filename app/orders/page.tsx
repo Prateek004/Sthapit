@@ -5,15 +5,16 @@ import AppShell from "@/components/ui/AppShell";
 import Modal from "@/components/ui/Modal";
 import {
   fmtRupee, fmtTime, fmtDate, todayStr, dateStrIST,
-  PAY_LABEL, SERVICE_LABEL, calcDiscount, calcGST, toP, QUICK_CASH,
+  PAY_LABEL, SERVICE_LABEL, calcDiscount, calcGST, toP, calcExactDenominations,
 } from "@/lib/utils";
 import type { Order, OpenTable, CartItem, PaymentMethod } from "@/lib/types";
 import {
   TrendingUp, Banknote, ShoppingBag, Cloud, CloudOff,
   RefreshCw, ChevronDown, ChevronUp, Plus, CheckCircle, Clock,
   Printer, MessageCircle, CheckCircle2, X, Loader2, QrCode,
-  Smartphone, ClipboardList, LayoutGrid, List, XCircle, AlertTriangle,
+  Smartphone, CreditCard, ClipboardList, LayoutGrid, List, XCircle, AlertTriangle,
 } from "lucide-react";
+import IndianCurrencySelector from "@/components/pos/IndianCurrencySelector";
 import { isSupabaseEnabled } from "@/lib/supabase/client";
 
 type PostTab = "invoice" | "whatsapp" | "kot";
@@ -390,15 +391,38 @@ function BillScreen({
               {order.items.map((item, i) => {
                 const ao = item.selectedAddOns.reduce((s, a) => s + a.pricePaise, 0);
                 const line = (item.unitPricePaise + ao) * item.qty;
+                const portionStr = item.selectedPortion
+                  ? ` (${item.selectedPortion})`
+                  : item.selectedSize
+                  ? ` (${item.selectedSize})`
+                  : "";
                 return (
-                  <div key={i} className="mb-1">
-                    <div className="flex justify-between">
-                      <span className="flex-1 truncate pr-2">{item.name}</span>
+                  <div key={i} className="mb-2">
+                    <div className="flex justify-between font-semibold">
+                      <span className="flex-1 pr-2">
+                        {item.name}
+                        {portionStr}
+                      </span>
                       <span>{fmtRupee(line)}</span>
                     </div>
-                    <div className="text-gray-400 pl-2">
-                      {item.qty} x {fmtRupee(item.unitPricePaise + ao)}
+                    <div className="text-gray-500 pl-2 text-[11px]">
+                      {item.qty} × {fmtRupee(item.unitPricePaise)}
                     </div>
+                    {item.selectedAddOns.length > 0 && (
+                      <div className="pl-2 text-gray-500 text-[11px] space-y-0.5 mt-0.5">
+                        {item.selectedAddOns.map((a, ai) => (
+                          <div key={ai} className="flex justify-between">
+                            <span>+ {a.name}</span>
+                            <span>+{fmtRupee(a.pricePaise * item.qty)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {item.notes && (
+                      <div className="pl-2 text-orange-600 text-[10px] italic mt-0.5">
+                        → {item.notes}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -522,9 +546,11 @@ function BillScreen({
 
 // ─── Payment methods ──────────────────────────────────────────────────────────
 const PAY_METHODS: { id: PaymentMethod; label: string; Icon: React.ElementType }[] = [
-  { id: "cash",  label: "Cash",  Icon: Banknote   },
-  { id: "upi",   label: "UPI",   Icon: Smartphone },
-  { id: "split", label: "Split", Icon: Banknote   },
+  { id: "cash", label: "Cash", Icon: Banknote },
+  { id: "upi", label: "UPI", Icon: Smartphone },
+  { id: "credit_card", label: "Credit Card", Icon: CreditCard },
+  { id: "debit_card", label: "Debit Card", Icon: CreditCard },
+  { id: "split", label: "Split", Icon: Banknote },
 ];
 
 // ─── CloseTableCheckout ───────────────────────────────────────────────────────
@@ -544,6 +570,7 @@ function CloseTableCheckout({
   const [discountType, setDiscountType]   = useState<"flat" | "percent">("flat");
   const [discountInput, setDiscountInput] = useState("");
   const [cashInput, setCashInput]         = useState("");
+  const [denominations, setDenominations] = useState<Record<number, number>>({});
   const [splitCash, setSplitCash]         = useState("");
   const [splitUpi, setSplitUpi]           = useState("");
   const [upiConfirmed, setUpiConfirmed]   = useState(false);
@@ -575,6 +602,9 @@ function CloseTableCheckout({
   const canConfirm =
     !placing &&
     ((method === "upi"   && upiConfirmed) ||
+     method === "credit_card" ||
+     method === "debit_card" ||
+     method === "card" ||
      (method === "cash"  && cashInput !== "" && cashPaise >= totalPaise) ||
      (method === "split" && splitOk));
 
@@ -706,7 +736,7 @@ function CloseTableCheckout({
 
       <div>
         <p className="text-sm font-bold text-gray-700 mb-2">Payment Method</p>
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
           {PAY_METHODS.map(({ id, label, Icon }) => (
             <button
               key={id}
@@ -715,14 +745,14 @@ function CloseTableCheckout({
                 setShowUpiQr(false);
                 setUpiConfirmed(false);
               }}
-              className={`py-3 rounded-2xl border-2 flex flex-col items-center gap-1.5 transition-all press ${
+              className={`py-2.5 px-1 rounded-2xl border-2 flex flex-col items-center justify-center gap-1 transition-all press ${
                 method === id
-                  ? "border-primary-500 bg-primary-50 text-primary-600"
-                  : "border-gray-200 text-gray-600"
+                  ? "border-primary-500 bg-primary-50 text-primary-600 shadow-xs"
+                  : "border-gray-200 text-gray-600 hover:border-gray-300"
               }`}
             >
-              <Icon size={20} />
-              <span className="text-xs font-bold">{label}</span>
+              <Icon size={18} />
+              <span className="text-[11px] font-extrabold text-center leading-tight">{label}</span>
             </button>
           ))}
         </div>
@@ -742,27 +772,28 @@ function CloseTableCheckout({
             value={cashInput}
             onChange={(e) => setCashInput(e.target.value)}
           />
-          <div className="flex gap-2 flex-wrap">
-            {QUICK_CASH.map((amt) => (
-              <button
-                key={amt}
-                onClick={() => setCashInput(String(amt))}
-                className={`px-3 py-1.5 rounded-xl border font-bold text-sm press ${
-                  Number(cashInput) === amt
-                    ? "border-primary-500 bg-primary-50 text-primary-600"
-                    : "border-gray-200 text-gray-600 bg-white"
-                }`}
-              >
-                &#8377;{amt}
-              </button>
-            ))}
-            <button
-              onClick={() => setCashInput(String(totalPaise / 100))}
-              className="px-3 py-1.5 rounded-xl border border-gray-200 font-bold text-sm text-gray-600 bg-white press"
-            >
-              Exact
-            </button>
-          </div>
+          {/* Indian Notes & Coins Counter Selector */}
+          <IndianCurrencySelector
+            onChange={(counts, totalRupees) => {
+              setDenominations(counts);
+              setCashInput(totalRupees > 0 ? String(totalRupees) : "");
+            }}
+            initialCounts={denominations}
+          />
+
+          {/* Exact Amount Button */}
+          <button
+            type="button"
+            onClick={() => {
+              const exactRupees = totalPaise / 100;
+              setCashInput(String(exactRupees));
+              setDenominations(calcExactDenominations(exactRupees));
+            }}
+            className="w-full py-2.5 px-4 rounded-xl border border-primary-300 bg-primary-50 text-primary-700 hover:bg-primary-100 font-black text-sm flex items-center justify-center gap-2 transition-all press shadow-2xs"
+          >
+            <span>Exact Cash ({fmtRupee(totalPaise)})</span>
+          </button>
+
           {cashInput !== "" && (
             <div
               className={`rounded-xl py-3 text-center font-bold text-sm ${
@@ -776,6 +807,24 @@ function CloseTableCheckout({
                 : `Short by ${fmtRupee(totalPaise - cashPaise)}`}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Card (Credit / Debit) */}
+      {(method === "credit_card" || method === "debit_card" || method === "card") && (
+        <div className="bg-purple-50/70 border border-purple-200/70 rounded-2xl p-4 text-center space-y-1.5">
+          <div className="w-10 h-10 rounded-xl bg-purple-500/10 text-purple-600 flex items-center justify-center mx-auto mb-2">
+            <CreditCard size={22} />
+          </div>
+          <p className="font-bold text-gray-900">
+            Collect via {method === "credit_card" ? "Credit Card" : method === "debit_card" ? "Debit Card" : "Card"}
+          </p>
+          <p className="text-2xl font-black text-purple-700">
+            {fmtRupee(totalPaise)}
+          </p>
+          <p className="text-xs text-gray-500 font-medium">
+            Swipe or tap card on POS terminal and tap Confirm below
+          </p>
         </div>
       )}
 
