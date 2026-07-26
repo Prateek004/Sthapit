@@ -142,7 +142,7 @@ Raw materials: ${JSON.stringify(rawMaterials.slice(0, 25))}`,
               STHAPPIT
             </div>
             <div style={{ fontSize: 10, color: "#4A6A58", lineHeight: 1.2 }}>
-              CLAUDE SONNET 4.6
+              GOOGLE GEMINI AI
             </div>
           </div>
         </div>
