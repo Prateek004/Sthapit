@@ -23,8 +23,8 @@ import {
   calcGST,
   generateBillNumber,
   toP,
-  QUICK_CASH,
   fmtDate,
+  calcExactDenominations,
 } from "@/lib/utils";
 import {
   ArrowLeft,
@@ -42,10 +42,12 @@ import {
   QrCode,
   Banknote,
   Smartphone,
+  CreditCard,
   ClipboardList,
   AlertTriangle,
 } from "lucide-react";
 import { printKot } from "@/components/pos/CartPanel";
+import IndianCurrencySelector from "@/components/pos/IndianCurrencySelector";
 
 // ── Table name helper ─────────────────────────────────────────────────────────
 
@@ -800,6 +802,8 @@ function TableCartPanel({
 const PAY_METHODS: { id: PaymentMethod; label: string; Icon: React.ElementType }[] = [
   { id: "cash", label: "Cash", Icon: Banknote },
   { id: "upi", label: "UPI", Icon: Smartphone },
+  { id: "credit_card", label: "Credit Card", Icon: CreditCard },
+  { id: "debit_card", label: "Debit Card", Icon: CreditCard },
   { id: "split", label: "Split", Icon: Banknote },
 ];
 
@@ -835,6 +839,7 @@ function CheckoutSheet({
 
   const [method, setMethod] = useState<PaymentMethod>("cash");
   const [cashInput, setCashInput] = useState("");
+  const [denominations, setDenominations] = useState<Record<number, number>>({});
   const [splitCash, setSplitCash] = useState("");
   const [splitUpi, setSplitUpi] = useState("");
   const [upiConfirmed, setUpiConfirmed] = useState(false);
@@ -852,6 +857,7 @@ function CheckoutSheet({
   useEffect(() => {
     setMethod("cash");
     setCashInput("");
+    setDenominations({});
     setSplitCash("");
     setSplitUpi("");
     setUpiConfirmed(false);
@@ -881,6 +887,9 @@ function CheckoutSheet({
   const canConfirm =
     !placing &&
     ((method === "upi" && upiConfirmed) ||
+      method === "credit_card" ||
+      method === "debit_card" ||
+      method === "card" ||
       (method === "cash" && cashInput !== "" && cashPaise >= totalPaise) ||
       (method === "split" && splitOk));
 
@@ -1029,6 +1038,10 @@ function CheckoutSheet({
             : undefined,
         cashReceivedPaise: method === "cash" ? cashPaise : undefined,
         changePaise: method === "cash" ? changePaise : 0,
+        denominations:
+          method === "cash" || (method === "split" && splitCashP > 0)
+            ? denominations
+            : undefined,
         createdAt: new Date().toISOString(),
         syncStatus: "pending",
         status: "completed",
@@ -1150,15 +1163,38 @@ function CheckoutSheet({
               {placedOrder.items.map((item, idx) => {
                 const ao = item.selectedAddOns.reduce((s, a) => s + a.pricePaise, 0);
                 const line = (item.unitPricePaise + ao) * item.qty;
+                const portionStr = item.selectedPortion
+                  ? ` (${item.selectedPortion})`
+                  : item.selectedSize
+                  ? ` (${item.selectedSize})`
+                  : "";
                 return (
-                  <div key={idx} className="mb-1">
-                    <div className="flex justify-between">
-                      <span className="flex-1 truncate pr-2">{item.name}</span>
+                  <div key={idx} className="mb-2">
+                    <div className="flex justify-between font-semibold">
+                      <span className="flex-1 pr-2">
+                        {item.name}
+                        {portionStr}
+                      </span>
                       <span>{fmtRupee(line)}</span>
                     </div>
-                    <div className="pl-2" style={{ color: "#A89684" }}>
-                      {item.qty} × {fmtRupee(item.unitPricePaise + ao)}
+                    <div className="pl-2 text-[11px]" style={{ color: "#7A6456" }}>
+                      {item.qty} × {fmtRupee(item.unitPricePaise)}
                     </div>
+                    {item.selectedAddOns.length > 0 && (
+                      <div className="pl-2 text-[11px] space-y-0.5 mt-0.5" style={{ color: "#7A6456" }}>
+                        {item.selectedAddOns.map((a, ai) => (
+                          <div key={ai} className="flex justify-between">
+                            <span>+ {a.name}</span>
+                            <span>+{fmtRupee(a.pricePaise * item.qty)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {item.notes && (
+                      <div className="pl-2 text-[10px] italic mt-0.5" style={{ color: "#E8590C" }}>
+                        → {item.notes}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -1287,7 +1323,7 @@ function CheckoutSheet({
             {/* Payment method */}
             <div>
               <p className="text-sm font-bold mb-2" style={{ color: "#1A1208" }}>Payment Method</p>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
                 {PAY_METHODS.map(({ id, label, Icon }) => (
                   <button
                     key={id}
@@ -1296,15 +1332,15 @@ function CheckoutSheet({
                       setShowUpiQr(false);
                       setUpiConfirmed(false);
                     }}
-                    className="py-3 rounded-2xl border-2 flex flex-col items-center gap-1.5 transition-all press"
+                    className="py-2.5 px-1 rounded-2xl border-2 flex flex-col items-center justify-center gap-1 transition-all press"
                     style={{
                       borderColor: method === id ? "#E8590C" : "#F0E8DF",
                       background: method === id ? "#FEF0E8" : "white",
                       color: method === id ? "#E8590C" : "#7A6456",
                     }}
                   >
-                    <Icon size={20} />
-                    <span className="text-xs font-bold">{label}</span>
+                    <Icon size={18} />
+                    <span className="text-[11px] font-extrabold text-center leading-tight">{label}</span>
                   </button>
                 ))}
               </div>
@@ -1331,29 +1367,33 @@ function CheckoutSheet({
                   value={cashInput}
                   onChange={(e) => setCashInput(e.target.value)}
                 />
-                <div className="flex gap-2 flex-wrap">
-                  {QUICK_CASH.map((amt) => (
-                    <button
-                      key={amt}
-                      onClick={() => setCashInput(String(amt))}
-                      className="px-3 py-1.5 rounded-xl border font-bold text-sm press"
-                      style={{
-                        borderColor: Number(cashInput) === amt ? "#E8590C" : "#F0E8DF",
-                        background: Number(cashInput) === amt ? "#FEF0E8" : "white",
-                        color: Number(cashInput) === amt ? "#E8590C" : "#7A6456",
-                      }}
-                    >
-                      ₹{amt}
-                    </button>
-                  ))}
-                  <button
-                    onClick={() => setCashInput(String(totalPaise / 100))}
-                    className="px-3 py-1.5 rounded-xl border font-bold text-sm press"
-                    style={{ borderColor: "#FACDB0", background: "#FEF0E8", color: "#E8590C" }}
-                  >
-                    Exact
-                  </button>
-                </div>
+                {/* Indian Notes & Coins Counter Selector */}
+                <IndianCurrencySelector
+                  onChange={(counts, totalRupees) => {
+                    setDenominations(counts);
+                    setCashInput(totalRupees > 0 ? String(totalRupees) : "");
+                  }}
+                  initialCounts={denominations}
+                />
+
+                {/* Exact Amount Button */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const exactRupees = totalPaise / 100;
+                    setCashInput(String(exactRupees));
+                    setDenominations(calcExactDenominations(exactRupees));
+                  }}
+                  className="w-full py-2.5 px-4 rounded-xl border font-black text-sm flex items-center justify-center gap-2 transition-all press shadow-2xs"
+                  style={{
+                    borderColor: "#FACDB0",
+                    background: "#FEF0E8",
+                    color: "#E8590C",
+                  }}
+                >
+                  <span>Exact Cash ({fmtRupee(totalPaise)})</span>
+                </button>
+
                 {cashInput !== "" && (
                   <div
                     className="rounded-xl py-3 text-center font-bold text-sm"
@@ -1367,6 +1407,24 @@ function CheckoutSheet({
                       : `Short by ${fmtRupee(totalPaise - cashPaise)}`}
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* Card (Credit / Debit) */}
+            {(method === "credit_card" || method === "debit_card" || method === "card") && (
+              <div className="rounded-2xl p-4 text-center space-y-1.5 border" style={{ background: "#F5F0FA", borderColor: "#E5DBCC" }}>
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center mx-auto mb-2" style={{ background: "#E8590C", color: "white" }}>
+                  <CreditCard size={22} />
+                </div>
+                <p className="font-bold" style={{ color: "#1A1208" }}>
+                  Collect via {method === "credit_card" ? "Credit Card" : method === "debit_card" ? "Debit Card" : "Card"}
+                </p>
+                <p className="text-2xl font-black" style={{ color: "#E8590C" }}>
+                  {fmtRupee(totalPaise)}
+                </p>
+                <p className="text-xs font-medium" style={{ color: "#7A6456" }}>
+                  Swipe or tap card on POS terminal and tap Collect &amp; Settle Bill below
+                </p>
               </div>
             )}
 
@@ -1544,6 +1602,10 @@ export default function TableOrderPage() {
   useEffect(() => {
     if (!isLoading && !session) router.replace("/auth");
   }, [isLoading, session, router]);
+
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [tableId]);
 
   const handleItemPress = useCallback((item: MenuItem) => {
     // Fast-add items with no options

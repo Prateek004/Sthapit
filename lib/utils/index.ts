@@ -151,9 +151,29 @@ export const BUSINESS_TYPE_LABEL: Record<string, string> = {
 
 export const QUICK_CASH = [50, 100, 200, 500, 1000, 2000];
 
+export const INDIAN_NOTES = [500, 200, 100, 50, 20, 10];
+export const INDIAN_COINS = [5, 2, 1];
+export const ALL_INDIAN_DENOMINATIONS = [500, 200, 100, 50, 20, 10, 5, 2, 1];
+
+export function calcExactDenominations(amountRupees: number): Record<number, number> {
+  let rem = Math.floor(amountRupees);
+  const result: Record<number, number> = {};
+  for (const d of ALL_INDIAN_DENOMINATIONS) {
+    if (rem >= d) {
+      const count = Math.floor(rem / d);
+      result[d] = count;
+      rem %= d;
+    }
+  }
+  return result;
+}
+
 export const PAY_LABEL: Record<string, string> = {
   cash: "Cash",
   upi: "UPI",
+  card: "Card",
+  credit_card: "Credit Card",
+  debit_card: "Debit Card",
   split: "Split",
 };
 

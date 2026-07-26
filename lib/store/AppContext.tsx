@@ -542,6 +542,7 @@ interface AppContextValue {
     discountValue: number;
     cashReceivedPaise?: number;
     splitPayment?: { cashPaise: number; upiPaise: number };
+    denominations?: Record<number, number>;
   }) => Promise<Order>;
   holdToTable: (tableNumber: number) => Promise<OpenTable>;
   upsertMenuItem: (item: MenuItem) => Promise<void>;
@@ -1013,6 +1014,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       discountValue: number;
       cashReceivedPaise?: number;
       splitPayment?: { cashPaise: number; upiPaise: number };
+      denominations?: Record<number, number>;
     }): Promise<Order> => {
       if (placeOrderInFlight.current)
         throw new Error("Order already being placed — please wait");
@@ -1025,6 +1027,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           discountValue,
           cashReceivedPaise,
           splitPayment,
+          denominations,
         } = params;
         const snap = structuredClone(state.cart);
         if (snap.length === 0) throw new Error("Cart is empty");
@@ -1091,6 +1094,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           splitPayment,
           cashReceivedPaise,
           changePaise,
+          denominations,
           createdAt: new Date().toISOString(),
           syncStatus: "pending",
           status: "completed",

@@ -3,7 +3,7 @@
 export type BusinessType = "cafe" | "restaurant" | "food_truck" | "kiosk" | "bakery" | "franchise";
 export type UserRole = "owner" | "cashier";
 export type ServiceMode = "dine_in" | "takeaway" | "delivery";
-export type PaymentMethod = "cash" | "upi" | "split";
+export type PaymentMethod = "cash" | "upi" | "card" | "credit_card" | "debit_card" | "split";
 export type TableStatus = "AVAILABLE" | "OCCUPIED";
 export type OrderStatus = "completed" | "voided" | "refunded";
 
@@ -302,6 +302,8 @@ export interface SplitPayment {
   upiPaise: number;
 }
 
+export type Denominations = Record<number, number>;
+
 export interface Order {
   id: string;
   billNumber: string;
@@ -319,6 +321,7 @@ export interface Order {
   splitPayment?: SplitPayment;
   cashReceivedPaise?: number;
   changePaise?: number;
+  denominations?: Denominations;
   createdAt: string;
   syncStatus: "pending" | "synced" | "failed";
   status?: OrderStatus;

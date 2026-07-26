@@ -28,6 +28,10 @@ export default function POSPage() {
     if (!isLoading && !session) router.replace("/auth");
   }, [isLoading, session, router]);
 
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, []);
+
   const filteredItems = menuItems
     .filter((item) => {
       const catOk = activeCat === "all" || item.categoryId === activeCat;
