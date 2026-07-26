@@ -4,7 +4,7 @@ import Modal from "@/components/ui/Modal";
 import QtyStepper from "@/components/ui/QtyStepper";
 import { useApp } from "@/lib/store/AppContext";
 import type { MenuItem, AddOn } from "@/lib/types";
-import { fmtRupee } from "@/lib/utils";
+import { fmtRupee, getItemPortions } from "@/lib/utils";
 import { Plus, Minus } from "lucide-react";
 
 interface Props {
@@ -13,18 +13,25 @@ interface Props {
 }
 
 export default function ItemConfigModal({ item, onClose }: Props) {
-  const { addToCart, showToast } = useApp();
+  const { state, addToCart, showToast } = useApp();
+  const categories = state.categories;
+
   const [qty, setQty] = useState(1);
   const [selectedSize, setSelectedSize] = useState<string | null>(null);
   const [selectedPortion, setSelectedPortion] = useState<string | null>(null);
   const [selectedAddOns, setSelectedAddOns] = useState<AddOn[]>([]);
   const [notes, setNotes] = useState("");
 
+  const portions = item ? getItemPortions(item, categories) : [];
+
   useEffect(() => {
     if (!item) return;
     setQty(1);
     setSelectedSize(item.sizes?.[0]?.label ?? null);
-    setSelectedPortion(item.portions?.[0]?.label ?? null);
+    const pList = getItemPortions(item, categories);
+    // Default to Full / Large (last portion) or first portion
+    const defaultP = pList.find((x) => x.label === "Full" || x.label === "Large")?.label ?? pList[0]?.label ?? null;
+    setSelectedPortion(defaultP);
     setSelectedAddOns([]);
     setNotes("");
   }, [item]);
@@ -32,7 +39,7 @@ export default function ItemConfigModal({ item, onClose }: Props) {
   if (!item) return null;
 
   const sizePrice = item.sizes?.find((s) => s.label === selectedSize)?.pricePaise;
-  const portionPrice = item.portions?.find((p) => p.label === selectedPortion)?.pricePaise;
+  const portionPrice = portions.find((p) => p.label === selectedPortion)?.pricePaise;
   const basePrice = sizePrice ?? portionPrice ?? item.pricePaise ?? 0;
   const addOnTotal = selectedAddOns.reduce((s, a) => s + a.pricePaise, 0);
   const unitPrice = basePrice + addOnTotal;
@@ -114,23 +121,24 @@ export default function ItemConfigModal({ item, onClose }: Props) {
         )}
 
         {/* Portions */}
-        {item.portionEnabled && item.portions && item.portions.length > 0 && (
+        {portions.length > 0 && (
           <div>
             <p className="text-sm font-bold text-gray-700 mb-2">Portion</p>
             <div className="flex gap-2 flex-wrap">
-              {item.portions.map((p) => (
+              {portions.map((p) => (
                 <button
                   key={p.label}
+                  type="button"
                   onClick={() => setSelectedPortion(p.label)}
                   className={`px-4 py-2 rounded-xl border-2 text-sm font-semibold transition-all press ${
                     selectedPortion === p.label
-                      ? "border-primary-500 bg-primary-50 text-primary-600"
-                      : "border-gray-200 text-gray-700"
+                      ? "border-primary-500 bg-primary-50 text-primary-600 font-extrabold shadow-2xs"
+                      : "border-gray-200 text-gray-700 hover:border-gray-300"
                   }`}
                 >
                   {p.label}
-                  <span className="ml-1 text-xs opacity-60">
-                    {fmtRupee(p.pricePaise)}
+                  <span className="ml-1.5 text-xs opacity-75 font-bold">
+                    ({fmtRupee(p.pricePaise)})
                   </span>
                 </button>
               ))}

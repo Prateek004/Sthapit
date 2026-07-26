@@ -155,17 +155,82 @@ export const INDIAN_NOTES = [500, 200, 100, 50, 20, 10];
 export const INDIAN_COINS = [5, 2, 1];
 export const ALL_INDIAN_DENOMINATIONS = [500, 200, 100, 50, 20, 10, 5, 2, 1];
 
-export function calcExactDenominations(amountRupees: number): Record<number, number> {
-  let rem = Math.floor(amountRupees);
-  const result: Record<number, number> = {};
-  for (const d of ALL_INDIAN_DENOMINATIONS) {
-    if (rem >= d) {
-      const count = Math.floor(rem / d);
-      result[d] = count;
-      rem %= d;
+type Denominations = Record<number, number>;
+
+export const calcExactDenominations = (amountRupees: number): Denominations => {
+  let remaining = Math.round(amountRupees);
+  const result: Denominations = {};
+  for (const denom of ALL_INDIAN_DENOMINATIONS) {
+    if (remaining >= denom) {
+      const count = Math.floor(remaining / denom);
+      result[denom] = count;
+      remaining %= denom;
     }
   }
   return result;
+};
+
+/**
+ * Helper to retrieve portion options for a MenuItem:
+ * 1. If explicit portions exist on item, return them.
+ * 2. If no explicit portion pricing is added:
+ *    - For beverages / liquid items: "Small" (40%), "Medium" (60%), "Large" (100%)
+ *    - For food / other items: "Half" (60%), "Full" (100%)
+ */
+export function getItemPortions(
+  item: {
+    portionEnabled?: boolean;
+    portions?: { label: string; pricePaise: number }[];
+    pricePaise: number;
+    name: string;
+    categoryId?: string;
+  },
+  categories?: { id: string; name: string }[]
+): { label: string; pricePaise: number }[] {
+  if (item.portionEnabled && item.portions && item.portions.length > 0) {
+    return item.portions;
+  }
+
+  const price = item.pricePaise ?? 0;
+  const catName = categories?.find((c) => c.id === item.categoryId)?.name.toLowerCase() ?? "";
+  const nameLower = item.name.toLowerCase();
+
+  const isBeverage =
+    catName.includes("beverage") ||
+    catName.includes("drink") ||
+    catName.includes("liquid") ||
+    catName.includes("tea") ||
+    catName.includes("coffee") ||
+    catName.includes("juice") ||
+    catName.includes("shake") ||
+    catName.includes("smoothie") ||
+    catName.includes("cocktail") ||
+    catName.includes("mocktail") ||
+    catName.includes("water") ||
+    catName.includes("soda") ||
+    nameLower.includes("chai") ||
+    nameLower.includes("tea") ||
+    nameLower.includes("lassi") ||
+    nameLower.includes("coffe") ||
+    nameLower.includes("coffee") ||
+    nameLower.includes("shake") ||
+    nameLower.includes("juice") ||
+    nameLower.includes("drink") ||
+    nameLower.includes("cooler") ||
+    nameLower.includes("mojito");
+
+  if (isBeverage) {
+    return [
+      { label: "Small", pricePaise: Math.round(price * 0.4) },
+      { label: "Medium", pricePaise: Math.round(price * 0.6) },
+      { label: "Large", pricePaise: price },
+    ];
+  }
+
+  return [
+    { label: "Half", pricePaise: Math.round(price * 0.6) },
+    { label: "Full", pricePaise: price },
+  ];
 }
 
 export const PAY_LABEL: Record<string, string> = {

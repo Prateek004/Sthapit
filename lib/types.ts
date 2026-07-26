@@ -295,6 +295,7 @@ export interface CartItem {
   selectedPortion?: string;
   selectedAddOns: AddOn[];
   notes?: string;
+  status?: "pending" | "placed";
 }
 
 export interface SplitPayment {
@@ -353,6 +354,7 @@ export interface TableOrderItem {
   selectedPortion?: string;
   selectedAddOns: AddOn[];
   notes?: string;
+  status?: "pending" | "placed";
 }
 
 export interface TableOrder {
@@ -382,6 +384,7 @@ export interface TableOrder {
   /** Order/KOT: true when kotFiredAt was set by the auto-placement timer rather
    *  than a manual "Print KOT" tap — purely informational, shown as a badge. */
   kotAutoPlaced?: boolean;
+  kotPrintCount?: number;
 }
 
 export interface RestaurantTable {

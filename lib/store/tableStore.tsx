@@ -27,7 +27,7 @@ import type {
   CartItem,
   UserSession,
 } from "@/lib/types";
-import { calcGST } from "@/lib/utils";
+import { calcGST, getItemPortions } from "@/lib/utils";
 import { Mutex } from "@/lib/utils/mutex";
 import { logAudit } from "@/lib/utils/auditLog";
 
@@ -283,7 +283,7 @@ export function TableStoreProvider({
           const unitPrice = size
             ? (menuItem.sizes?.find((s) => s.label === size)?.pricePaise ?? menuItem.pricePaise)
             : portion
-            ? (menuItem.portions?.find((p) => p.label === portion)?.pricePaise ?? menuItem.pricePaise)
+            ? (getItemPortions(menuItem).find((p) => p.label === portion)?.pricePaise ?? menuItem.pricePaise)
             : menuItem.pricePaise;
           newItems = [
             ...base.items,
@@ -507,10 +507,16 @@ export function TableStoreProvider({
       await persistAtomic(tableId, (existing) => {
         if (!existing || existing.items.length === 0) return null;
         const now = new Date().toISOString();
+        const updatedItems = existing.items.map((i) => ({
+          ...i,
+          status: "placed" as const,
+        }));
         return {
           ...existing,
+          items: updatedItems,
           kotFiredAt: now,
           kotAutoPlaced: auto,
+          kotPrintCount: (existing.kotPrintCount ?? 0) + 1,
           updatedAt: now,
           version: existing.version + 1,
           syncStatus: "pending",
@@ -534,21 +540,20 @@ export function TableStoreProvider({
   useEffect(() => {
     if (!session?.businessId) return;
     const interval = setInterval(() => {
-      const minutes = autoPlaceMinutesRef.current;
-      if (!minutes || minutes <= 0) return;
+      const minutes = autoPlaceMinutesRef.current > 0 ? autoPlaceMinutesRef.current : 2;
       const now = Date.now();
       for (const order of Object.values(stateRef.current.orders)) {
         if (
           order.status === "OCCUPIED" &&
           order.items.length > 0 &&
           order.heldAt &&
-          !order.kotFiredAt &&
+          (!order.kotFiredAt || order.items.some((i) => i.status !== "placed")) &&
           now - new Date(order.heldAt).getTime() >= minutes * 60_000
         ) {
           markKotFired(order.tableId, true).catch(() => {});
         }
       }
-    }, 20_000);
+    }, 5_000);
     return () => clearInterval(interval);
   }, [session?.businessId, markKotFired]);
 

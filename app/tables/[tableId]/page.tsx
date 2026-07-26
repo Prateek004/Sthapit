@@ -11,6 +11,7 @@ import { useRouter, useParams } from "next/navigation";
 import { useApp } from "@/lib/store/AppContext";
 import { useTableStore, useTableOrder } from "@/lib/store/tableStore";
 import AppShell from "@/components/ui/AppShell";
+import Modal from "@/components/ui/Modal";
 import DietFilter, { DietFilterValue } from "@/components/ui/DietFilter";
 import QtyStepper from "@/components/ui/QtyStepper";
 import type { MenuItem, AddOn, Order, PaymentMethod } from "@/lib/types";
@@ -25,6 +26,7 @@ import {
   toP,
   fmtDate,
   calcExactDenominations,
+  getItemPortions,
 } from "@/lib/utils";
 import {
   ArrowLeft,
@@ -267,47 +269,38 @@ interface ItemConfigProps {
 }
 
 function ItemConfigSheet({ item, onClose, onConfirm }: ItemConfigProps) {
+  const { state } = useApp();
+  const categories = state.categories;
+
   const [selectedAddOns, setSelectedAddOns] = useState<AddOn[]>([]);
   const [selectedSize, setSelectedSize] = useState<string | undefined>();
   const [selectedPortion, setSelectedPortion] = useState<string | undefined>();
   const [notes, setNotes] = useState("");
 
+  const portions = item ? getItemPortions(item, categories) : [];
+
   useEffect(() => {
     if (item) {
       setSelectedAddOns([]);
       setSelectedSize(item.sizes?.[0]?.label);
-      setSelectedPortion(item.portions?.[0]?.label);
+      const pList = getItemPortions(item, categories);
+      const defaultP = pList.find((x) => x.label === "Full" || x.label === "Large")?.label ?? pList[0]?.label;
+      setSelectedPortion(defaultP);
       setNotes("");
     }
   }, [item?.id]);
 
   if (!item) return null;
 
-  const hasOptions =
-    (item.sizes && item.sizes.length > 0) ||
-    (item.portions && item.portions.length > 0) ||
-    item.addOns.length > 0;
-
-  const handleFastAdd = () => {
-    onConfirm(item, [], undefined, undefined, undefined);
-    onClose();
-  };
-
   const handleConfirm = () => {
     onConfirm(item, selectedAddOns, selectedSize, selectedPortion, notes || undefined);
     onClose();
   };
 
-  if (!hasOptions) {
-    // Fast-add: no config needed
-    handleFastAdd();
-    return null;
-  }
-
   const effectivePrice = selectedSize
     ? (item.sizes?.find((s) => s.label === selectedSize)?.pricePaise ?? item.pricePaise)
     : selectedPortion
-      ? (item.portions?.find((p) => p.label === selectedPortion)?.pricePaise ?? item.pricePaise)
+      ? (portions.find((p) => p.label === selectedPortion)?.pricePaise ?? item.pricePaise)
       : item.pricePaise;
 
   const addOnTotal = selectedAddOns.reduce((s, a) => s + a.pricePaise, 0);
@@ -348,6 +341,7 @@ function ItemConfigSheet({ item, onClose, onConfirm }: ItemConfigProps) {
                   {item.sizes.map((s) => (
                     <button
                       key={s.label}
+                      type="button"
                       onClick={() => setSelectedSize(s.label)}
                       className="px-3 py-1.5 rounded-xl text-sm font-bold border-2 press transition-all"
                       style={{
@@ -364,17 +358,18 @@ function ItemConfigSheet({ item, onClose, onConfirm }: ItemConfigProps) {
             )}
 
             {/* Portions */}
-            {item.portions && item.portions.length > 0 && (
+            {portions.length > 0 && (
               <div>
                 <p className="text-xs font-bold uppercase tracking-wider mb-2" style={{ color: "#7A6456" }}>
                   Portion
                 </p>
                 <div className="flex flex-wrap gap-2">
-                  {item.portions.map((p) => (
+                  {portions.map((p) => (
                     <button
                       key={p.label}
+                      type="button"
                       onClick={() => setSelectedPortion(p.label)}
-                      className="px-3 py-1.5 rounded-xl text-sm font-bold border-2 press transition-all"
+                      className="px-3.5 py-2 rounded-xl text-sm font-bold border-2 press transition-all"
                       style={{
                         borderColor: selectedPortion === p.label ? "#E8590C" : "#F0E8DF",
                         background: selectedPortion === p.label ? "#FEF0E8" : "white",
@@ -498,10 +493,12 @@ function TableCartPanel({
 
   const kotEnabled = guardState.session?.stockSettings?.kotEnabled ?? false;
 
+  const [showKotConfirmModal, setShowKotConfirmModal] = useState(false);
+
   // Order/KOT: prints a KOT for the table's REAL, persisted items (order.items)
   // — never a local snapshot — then marks it fired so the button reflects
   // whether the current item set has already reached the kitchen.
-  const handlePrintKot = useCallback(async () => {
+  const executePrintKot = useCallback(async () => {
     if (!order || order.items.length === 0) return;
     setFiringKot(true);
     try {
@@ -517,8 +514,18 @@ function TableCartPanel({
       guardToast(`KOT printed for Table ${tableNumber} ✓`);
     } finally {
       setFiringKot(false);
+      setShowKotConfirmModal(false);
     }
   }, [order, tableId, tableNumber, markKotFired, guardState.session?.businessName, guardToast]);
+
+  const handlePrintKotClick = useCallback(() => {
+    const printCount = order?.kotPrintCount ?? 0;
+    if (printCount >= 2) {
+      setShowKotConfirmModal(true);
+    } else {
+      executePrintKot();
+    }
+  }, [order?.kotPrintCount, executePrintKot]);
 
   const items = order?.items ?? [];
   const itemCount = items.reduce((s, i) => s + i.qty, 0);
@@ -586,6 +593,7 @@ function TableCartPanel({
         {items.map((item) => {
           const ao = item.selectedAddOns.reduce((s, a) => s + a.pricePaise, 0);
           const lineTotal = (item.unitPricePaise + ao) * item.qty;
+          const isPlaced = item.status === "placed";
           return (
             <div
               key={item.cartId}
@@ -594,8 +602,13 @@ function TableCartPanel({
             >
               <div className="flex items-start gap-2 mb-2">
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-bold truncate" style={{ color: "#1A1208" }}>
-                    {item.name}
+                  <p className="text-sm font-bold truncate flex items-center gap-1.5" style={{ color: "#1A1208" }}>
+                    <span>{item.name}</span>
+                    {isPlaced && (
+                      <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded-md bg-emerald-100 text-emerald-800 shrink-0">
+                        Placed ✓
+                      </span>
+                    )}
                   </p>
                   {item.selectedSize && (
                     <p className="text-xs" style={{ color: "#7A6456" }}>
@@ -618,13 +631,16 @@ function TableCartPanel({
                     </p>
                   )}
                 </div>
-                <button
-                  onClick={() => removeItem(tableId, item.cartId)}
-                  className="press shrink-0"
-                  style={{ color: "#E5DBCC" }}
-                >
-                  <Trash2 size={14} />
-                </button>
+                {!isPlaced && (
+                  <button
+                    onClick={() => removeItem(tableId, item.cartId)}
+                    className="press shrink-0"
+                    style={{ color: "#E5DBCC" }}
+                    title="Delete Item"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                )}
               </div>
               <div className="flex items-center justify-between">
                 <QtyStepper
@@ -733,7 +749,7 @@ function TableCartPanel({
         {/* Print KOT — decoupled from Hold; always reflects order.items */}
         {kotEnabled && (
           <button
-            onClick={handlePrintKot}
+            onClick={handlePrintKotClick}
             disabled={firingKot}
             className="w-full h-11 flex items-center justify-center gap-2 rounded-2xl border-2 font-bold text-sm press disabled:opacity-40"
             style={{
@@ -753,6 +769,37 @@ function TableCartPanel({
                 ? `KOT Printed${order.kotAutoPlaced ? " (auto)" : ""} ✓ — Reprint`
                 : "Print KOT"}
           </button>
+        )}
+
+        {/* Confirmation Modal for Reprint KOT (3rd+ click) */}
+        {showKotConfirmModal && (
+          <Modal open={showKotConfirmModal} onClose={() => setShowKotConfirmModal(false)} title="">
+            <div className="p-5 text-center space-y-3">
+              <div className="w-12 h-12 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center mx-auto">
+                <AlertTriangle size={24} />
+              </div>
+              <h3 className="font-extrabold text-gray-900 text-base">Should we proceed again?</h3>
+              <p className="text-xs text-gray-500">
+                KOT has already been printed {order?.kotPrintCount} times for Table {tableNumber}.
+              </p>
+              <div className="flex gap-2.5 pt-2">
+                <button
+                  onClick={() => setShowKotConfirmModal(false)}
+                  className="flex-1 py-2.5 rounded-xl border border-gray-200 font-bold text-sm text-gray-600 press"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={executePrintKot}
+                  disabled={firingKot}
+                  className="flex-1 py-2.5 rounded-xl bg-orange-500 text-white font-bold text-sm press shadow-sm disabled:opacity-50 flex items-center justify-center gap-1.5"
+                >
+                  {firingKot && <Loader2 size={15} className="animate-spin" />}
+                  <span>Yes</span>
+                </button>
+              </div>
+            </div>
+          </Modal>
         )}
 
         {/* Hold */}
@@ -1608,10 +1655,10 @@ export default function TableOrderPage() {
   }, [tableId]);
 
   const handleItemPress = useCallback((item: MenuItem) => {
-    // Fast-add items with no options
+    const portions = getItemPortions(item, categories);
     const hasOptions =
       (item.sizes && item.sizes.length > 0) ||
-      (item.portions && item.portions.length > 0) ||
+      portions.length > 0 ||
       item.addOns.length > 0;
 
     if (!hasOptions) {
@@ -1619,7 +1666,7 @@ export default function TableOrderPage() {
     } else {
       setConfigItem(item);
     }
-  }, [tableId, tableName, tableNumber, addItem]);
+  }, [tableId, tableName, tableNumber, addItem, categories]);
 
   const handleConfigConfirm = useCallback(
     (item: MenuItem, addOns: AddOn[], size?: string, portion?: string, notes?: string) => {
@@ -1822,10 +1869,12 @@ function MobileTableView({
   const totalPaise = order?.totalPaise ?? 0;
   const kotEnabled = guardState.session?.stockSettings?.kotEnabled ?? false;
 
+  const [showKotConfirmModal, setShowKotConfirmModal] = useState(false);
+
   // Order/KOT: same fix as the desktop TableCartPanel — prints from the
   // persisted order.items, never a local snapshot, and is fully independent
   // of Hold Order below.
-  const handlePrintKot = useCallback(async () => {
+  const executePrintKot = useCallback(async () => {
     if (!order || order.items.length === 0) return;
     setFiringKot(true);
     try {
@@ -1841,8 +1890,18 @@ function MobileTableView({
       guardToast(`KOT printed for Table ${tableNumber} ✓`);
     } finally {
       setFiringKot(false);
+      setShowKotConfirmModal(false);
     }
   }, [order, tableId, tableNumber, markKotFired, guardState.session?.businessName, guardToast]);
+
+  const handlePrintKotClick = useCallback(() => {
+    const printCount = order?.kotPrintCount ?? 0;
+    if (printCount >= 2) {
+      setShowKotConfirmModal(true);
+    } else {
+      executePrintKot();
+    }
+  }, [order?.kotPrintCount, executePrintKot]);
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
@@ -1903,6 +1962,7 @@ function MobileTableView({
               {items.map((item) => {
                 const ao = item.selectedAddOns.reduce((s, a) => s + a.pricePaise, 0);
                 const lineTotal = (item.unitPricePaise + ao) * item.qty;
+                const isPlaced = item.status === "placed";
                 return (
                   <div
                     key={item.cartId}
@@ -1910,8 +1970,13 @@ function MobileTableView({
                     style={{ background: "#FEF9F4", border: "1px solid #F0E8DF" }}
                   >
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-bold truncate" style={{ color: "#1A1208" }}>
-                        {item.name}
+                      <p className="text-sm font-bold truncate flex items-center gap-1.5" style={{ color: "#1A1208" }}>
+                        <span>{item.name}</span>
+                        {isPlaced && (
+                          <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded-md bg-emerald-100 text-emerald-800 shrink-0">
+                            Placed ✓
+                          </span>
+                        )}
                       </p>
                       {item.notes && (
                         <p className="text-xs italic" style={{ color: "#E8590C" }}>
@@ -1944,13 +2009,16 @@ function MobileTableView({
                     <span className="text-sm font-black shrink-0 ml-1" style={{ color: "#1A1208" }}>
                       {fmtRupee(lineTotal)}
                     </span>
-                    <button
-                      onClick={() => removeItem(tableId, item.cartId)}
-                      className="press shrink-0"
-                      style={{ color: "#E5DBCC" }}
-                    >
-                      <Trash2 size={14} />
-                    </button>
+                    {!isPlaced && (
+                      <button
+                        onClick={() => removeItem(tableId, item.cartId)}
+                        className="press shrink-0"
+                        style={{ color: "#E5DBCC" }}
+                        title="Delete Item"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    )}
                   </div>
                 );
               })}
@@ -1966,7 +2034,7 @@ function MobileTableView({
               </div>
               {kotEnabled && (
                 <button
-                  onClick={handlePrintKot}
+                  onClick={handlePrintKotClick}
                   disabled={firingKot}
                   className="w-full h-11 flex items-center justify-center gap-2 rounded-2xl border-2 font-bold text-sm press disabled:opacity-40"
                   style={{
@@ -1983,6 +2051,38 @@ function MobileTableView({
                       : "Print KOT"}
                 </button>
               )}
+
+              {/* Confirmation Modal for Reprint KOT (3rd+ click) */}
+              {showKotConfirmModal && (
+                <Modal open={showKotConfirmModal} onClose={() => setShowKotConfirmModal(false)} title="">
+                  <div className="p-5 text-center space-y-3">
+                    <div className="w-12 h-12 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center mx-auto">
+                      <AlertTriangle size={24} />
+                    </div>
+                    <h3 className="font-extrabold text-gray-900 text-base">Should we proceed again?</h3>
+                    <p className="text-xs text-gray-500">
+                      KOT has already been printed {order?.kotPrintCount} times for Table {tableNumber}.
+                    </p>
+                    <div className="flex gap-2.5 pt-2">
+                      <button
+                        onClick={() => setShowKotConfirmModal(false)}
+                        className="flex-1 py-2.5 rounded-xl border border-gray-200 font-bold text-sm text-gray-600 press"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={executePrintKot}
+                        disabled={firingKot}
+                        className="flex-1 py-2.5 rounded-xl bg-orange-500 text-white font-bold text-sm press shadow-sm disabled:opacity-50 flex items-center justify-center gap-1.5"
+                      >
+                        {firingKot && <Loader2 size={15} className="animate-spin" />}
+                        <span>Yes</span>
+                      </button>
+                    </div>
+                  </div>
+                </Modal>
+              )}
+
               <button
                 onClick={async () => { setShowCart(false); await onHold(); }}
                 disabled={holding}
